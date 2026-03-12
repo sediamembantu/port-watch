@@ -76,17 +76,20 @@ export interface AISMessage {
  * Create the AISStream subscription message for Malaysian port areas.
  */
 export function buildSubscriptionMessage(apiKey: string): string {
-  // Combine all port geofences + Malacca Strait into bounding boxes
-  const boundingBoxes = [
-    ...Object.values(PORT_GEOFENCES),
-    MALACCA_STRAIT_GEOFENCE,
-  ];
-
-  return JSON.stringify({
-    APIKey: apiKey,
-    BoundingBoxes: boundingBoxes,
+  // Single large bounding box covering all Malaysian waters + Malacca Strait
+  // From ~0.5°N to ~7°N, 99°E to 119°E (covers Peninsula + East Malaysia)
+  const msg = {
+    Apikey: apiKey,
+    BoundingBoxes: [
+      [
+        [0.5, 99.0],
+        [7.5, 119.0],
+      ],
+    ],
     FilterMessageTypes: ["PositionReport"],
-  });
+  };
+  console.log(`[aisstream] Subscription: ${JSON.stringify(msg).substring(0, 200)}`);
+  return JSON.stringify(msg);
 }
 
 /**
