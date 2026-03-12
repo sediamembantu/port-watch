@@ -41,8 +41,6 @@ export function Dashboard({ summary, chartData, ports }: DashboardProps) {
         />
       </div>
 
-      <RealtimePanel />
-
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ChokepointPanel />
         <TradePanel />
@@ -58,7 +56,7 @@ export function Dashboard({ summary, chartData, ports }: DashboardProps) {
       <PortTable portScores={summary.portScores} />
 
       <div className="text-xs text-gray-600">
-        Data: IMF PortWatch, AISStream.io, OpenDOSM | Methodology:
+        Data: IMF PortWatch, OpenDOSM | Methodology:
         Trade-weighted disruption scoring | Updated: {summary.date}
       </div>
     </div>
