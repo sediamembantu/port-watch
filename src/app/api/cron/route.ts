@@ -37,16 +37,20 @@ export async function GET(request: NextRequest) {
 
     if (records.length > 0) {
       try {
-        await saveSnapshot({
+        saved = await saveSnapshot({
           timestamp: new Date().toISOString(),
           records,
         });
-        saved = true;
       } catch (err) {
         saveError = err instanceof Error ? err.message : String(err);
         console.error("[cron] Redis save failed:", saveError);
       }
     }
+
+    // List KV/Redis env vars for debugging
+    const kvEnvVars = Object.keys(process.env).filter(
+      (k) => k.includes("KV") || k.includes("REDIS") || k.includes("UPSTASH") || k.includes("STORAGE")
+    );
 
     return NextResponse.json({
       success: true,
@@ -54,7 +58,7 @@ export async function GET(request: NextRequest) {
       chokepointRecordCount: chokepointRecords.length,
       saved,
       saveError,
-      redisConfigured: !!(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || process.env.STORAGE_URL),
+      kvEnvVars,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

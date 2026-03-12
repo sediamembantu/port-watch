@@ -19,11 +19,11 @@ function getRedis(): Redis | null {
 /**
  * Save a data snapshot to Redis.
  */
-export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
+export async function saveSnapshot(snapshot: DataSnapshot): Promise<boolean> {
   const redis = getRedis();
   if (!redis) {
     console.warn("[data-store] Redis not configured, skipping save");
-    return;
+    return false;
   }
 
   const dateStr = new Date().toISOString().split("T")[0];
@@ -32,6 +32,7 @@ export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
     redis.set(LATEST_KEY, JSON.stringify(snapshot)),
     redis.set(`${ARCHIVE_PREFIX}${dateStr}`, JSON.stringify(snapshot), { ex: 90 * 86400 }),
   ]);
+  return true;
 }
 
 /**
