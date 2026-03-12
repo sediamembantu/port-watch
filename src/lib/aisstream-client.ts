@@ -232,10 +232,13 @@ export async function fetchRealtimeSnapshot(
   const positions: VesselPosition[] = [];
 
   return new Promise((resolve) => {
+    console.log(`[aisstream] Connecting to ${AISSTREAM_WS_URL}...`);
     const ws = new WebSocket(AISSTREAM_WS_URL);
     let messageCount = 0;
+    let rawMessageCount = 0;
 
     const timeout = setTimeout(() => {
+      console.log(`[aisstream] Timeout reached. ${messageCount} parsed, ${rawMessageCount} raw messages`);
       ws.close();
       resolve({
         portVessels: aggregatePortVessels(positions),
@@ -245,23 +248,32 @@ export async function fetchRealtimeSnapshot(
     }, durationMs);
 
     ws.onopen = () => {
-      ws.send(buildSubscriptionMessage(apiKey));
+      const subMsg = buildSubscriptionMessage(apiKey);
+      console.log(`[aisstream] Connected. Sending subscription with ${Object.keys(PORT_GEOFENCES).length + 1} bounding boxes`);
+      ws.send(subMsg);
     };
 
     ws.onmessage = (event) => {
+      rawMessageCount++;
       try {
         const data = JSON.parse(String(event.data)) as AISMessage;
+        if (rawMessageCount <= 3) {
+          console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
+        }
         const pos = parseAISMessage(data);
         if (pos) {
           positions.push(pos);
           messageCount++;
         }
-      } catch {
-        // Skip malformed messages
+      } catch (err) {
+        if (rawMessageCount <= 3) {
+          console.warn(`[aisstream] Parse error on message ${rawMessageCount}:`, String(event.data).substring(0, 200));
+        }
       }
     };
 
-    ws.onerror = () => {
+    ws.onerror = (err) => {
+      console.error(`[aisstream] WebSocket error:`, err);
       clearTimeout(timeout);
       ws.close();
       resolve({
@@ -269,6 +281,10 @@ export async function fetchRealtimeSnapshot(
         malaccaTransits: countMalaccaTransits(positions),
         messagesReceived: messageCount,
       });
+    };
+
+    ws.onclose = (event) => {
+      console.log(`[aisstream] Connection closed: code=${event.code}, reason=${event.reason}`);
     };
   });
 }
