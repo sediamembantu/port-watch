@@ -79,7 +79,7 @@ export function buildSubscriptionMessage(apiKey: string): string {
   // Single large bounding box covering all Malaysian waters + Malacca Strait
   // From ~0.5°N to ~7°N, 99°E to 119°E (covers Peninsula + East Malaysia)
   const msg = {
-    Apikey: apiKey,
+    APIKey: apiKey,
     BoundingBoxes: [
       [
         [0.5, 99.0],
