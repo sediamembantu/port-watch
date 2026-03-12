@@ -253,10 +253,14 @@ export async function fetchRealtimeSnapshot(
       ws.send(subMsg);
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
       rawMessageCount++;
       try {
-        const data = JSON.parse(String(event.data)) as AISMessage;
+        // Handle Blob or string data
+        const text = event.data instanceof Blob
+          ? await event.data.text()
+          : String(event.data);
+        const data = JSON.parse(text) as AISMessage;
         if (rawMessageCount <= 3) {
           console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
         }
@@ -267,7 +271,7 @@ export async function fetchRealtimeSnapshot(
         }
       } catch (err) {
         if (rawMessageCount <= 3) {
-          console.warn(`[aisstream] Parse error on message ${rawMessageCount}:`, String(event.data).substring(0, 200));
+          console.warn(`[aisstream] Parse error on message ${rawMessageCount}:`, typeof event.data, String(event.data).substring(0, 200));
         }
       }
     };
