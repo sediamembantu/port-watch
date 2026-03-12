@@ -50,15 +50,19 @@ export async function fetchTradeData(
 
   const params = new URLSearchParams({
     id: "trade_sitc_1d",
-    date_start: sinceStr,
+    date_start: `${sinceStr}@date`,
     limit: "200",
     sort: "-date",
   });
 
   const url = `${DOSM_API}?${params}`;
+  console.log("[dosm] Fetching:", url);
   const res = await fetch(url, { next: { revalidate: 86400 } });
 
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.error("[dosm] API error:", res.status, res.statusText);
+    return [];
+  }
 
   const data: unknown = await res.json();
   const items = Array.isArray(data) ? data : [];
