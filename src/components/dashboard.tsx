@@ -5,6 +5,9 @@ import { DisruptionGauge } from "./disruption-gauge";
 import { PortTable } from "./port-table";
 import { ActivityChart } from "./activity-chart";
 import { AlertBanner } from "./alert-banner";
+import { RealtimePanel } from "./realtime-panel";
+import { ChokepointPanel } from "./chokepoint-panel";
+import { TradePanel } from "./trade-panel";
 
 interface DashboardProps {
   summary: DisruptionSummary;
@@ -38,6 +41,13 @@ export function Dashboard({ summary, chartData, ports }: DashboardProps) {
         />
       </div>
 
+      <RealtimePanel />
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ChokepointPanel />
+        <TradePanel />
+      </div>
+
       <ActivityChart
         data={chartData}
         title="Disruption Score (30 days)"
@@ -48,8 +58,8 @@ export function Dashboard({ summary, chartData, ports }: DashboardProps) {
       <PortTable portScores={summary.portScores} />
 
       <div className="text-xs text-gray-600">
-        Data: IMF PortWatch | Methodology: Trade-weighted disruption scoring |
-        Updated: {summary.date}
+        Data: IMF PortWatch, AISStream.io, OpenDOSM | Methodology:
+        Trade-weighted disruption scoring | Updated: {summary.date}
       </div>
     </div>
   );
