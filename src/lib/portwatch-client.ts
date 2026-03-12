@@ -6,18 +6,12 @@ const DAILY_PORT_ACTIVITY_DATASET_IDS = [
   "75619cb86e5f4beeb7dab9629d861acf",
 ];
 
-// ArcGIS Feature Service bases to try (correct org ID: weJ1QsnbMYJlCHdG)
-const ARCGIS_BASES = [
-  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
-  "https://services.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
-];
+// ArcGIS Feature Service base (correct org ID: weJ1QsnbMYJlCHdG, services9 only)
+const ARCGIS_BASE =
+  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services";
 
-// Known service names for PortWatch feature layers
-const SERVICE_NAMES = [
-  "PortWatch_ports_database",
-  "Daily_Port_Activity_Data_and_Trade_Estimates",
-  "PortWatch_Portal",
-];
+// Daily port activity service (discovered via /api/debug)
+const DAILY_PORTS_SERVICE = "Daily_Ports_Data";
 
 export interface PortActivityRecord {
   portId: string;
@@ -50,39 +44,33 @@ export async function fetchPortActivity(
   since.setDate(since.getDate() - daysBack);
   const sinceStr = since.toISOString().split("T")[0];
 
-  // Try different field name patterns for port code and date
+  // Query the Daily_Ports_Data service directly
+  // Try multiple field name patterns for the port code
   const whereClauses = [
+    `portid='${portUnlocode}' AND date>='${sinceStr}'`,
+    `LOCODE='${portUnlocode}' AND date>='${sinceStr}'`,
     `port_code='${portUnlocode}' AND date_str>='${sinceStr}'`,
-    `locode='${portUnlocode}' AND date_str>='${sinceStr}'`,
-    `portcode='${portUnlocode}' AND date_str>='${sinceStr}'`,
   ];
 
-  // Try each ArcGIS base + service name + field name combination
-  for (const base of ARCGIS_BASES) {
-    for (const serviceName of SERVICE_NAMES) {
-      for (const whereClause of whereClauses) {
-        try {
-          const params = new URLSearchParams({
-            where: whereClause,
-            outFields: "*",
-            orderByFields: "date_str DESC",
-            resultRecordCount: "100",
-            f: "json",
-          });
-          const url = `${base}/${serviceName}/FeatureServer/0/query?${params}`;
-          const res = await fetch(url, { next: { revalidate: 3600 } });
-          if (!res.ok) continue;
+  for (const whereClause of whereClauses) {
+    try {
+      const params = new URLSearchParams({
+        where: whereClause,
+        outFields: "*",
+        resultRecordCount: "100",
+        f: "json",
+      });
+      const url = `${ARCGIS_BASE}/${DAILY_PORTS_SERVICE}/FeatureServer/0/query?${params}`;
+      const res = await fetch(url, { next: { revalidate: 3600 } });
+      if (!res.ok) continue;
 
-          const data = await res.json();
-          if (data.features && data.features.length > 0) {
-            return data;
-          }
-          // ArcGIS returns 200 with error object for invalid service/field names
-          if (data.error) continue;
-        } catch {
-          continue;
-        }
+      const data = await res.json();
+      if (data.features && data.features.length > 0) {
+        return data;
       }
+      if (data.error) continue;
+    } catch {
+      continue;
     }
   }
 

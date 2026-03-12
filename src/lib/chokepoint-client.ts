@@ -5,11 +5,12 @@
  * Dataset ID: 42132aa4e2fc4d41bdaf9a445f688931
  */
 
-// Use the correct PortWatch org ID
-const ARCGIS_BASES = [
-  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
-  "https://services.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
-];
+// ArcGIS Feature Service base (correct org ID: weJ1QsnbMYJlCHdG, services9 only)
+const ARCGIS_BASE =
+  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services";
+
+// Daily chokepoint service (discovered via /api/debug)
+const DAILY_CHOKEPOINTS_SERVICE = "Daily_Chokepoints_Data";
 
 export interface ChokepointRecord {
   date: string;
@@ -45,30 +46,19 @@ export async function fetchMalaccaChokepointData(
     f: "json",
   });
 
-  // Try multiple possible service names for the chokepoint layer
-  const serviceNames = [
-    "PortWatch_Chokepoints_Portal/FeatureServer/0",
-    "PortWatch_Portal_Portal_Portal/FeatureServer/1",
-    "Daily_Chokepoint_Transit/FeatureServer/0",
-    "chokepoint_daily/FeatureServer/0",
-  ];
+  // Query Daily_Chokepoints_Data service directly
+  try {
+    const url = `${ARCGIS_BASE}/${DAILY_CHOKEPOINTS_SERVICE}/FeatureServer/0/query?${params}`;
+    const res = await fetch(url, { next: { revalidate: 3600 } });
 
-  for (const base of ARCGIS_BASES) {
-    for (const serviceName of serviceNames) {
-      try {
-        const url = `${base}/${serviceName}/query?${params}`;
-        const res = await fetch(url, { next: { revalidate: 3600 } });
-
-        if (!res.ok) continue;
-
-        const data = await res.json();
-        if (data.features && data.features.length > 0) {
-          return normalizeChokepointData(data.features);
-        }
-      } catch {
-        continue;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.features && data.features.length > 0) {
+        return normalizeChokepointData(data.features);
       }
     }
+  } catch {
+    // Fall through to Hub fallback
   }
 
   // Fallback: try the Hub download API
