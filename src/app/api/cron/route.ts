@@ -18,7 +18,10 @@ export async function GET(request: NextRequest) {
     console.log("[cron] Fetching Malaysian port data + chokepoint data...");
 
     const [records, chokepointRecords] = await Promise.all([
-      fetchAllMalaysianPorts(30),
+      fetchAllMalaysianPorts(30).catch((err) => {
+        console.error("[cron] Port fetch failed:", err);
+        return [];
+      }),
       fetchMalaccaChokepointData(30).catch((err) => {
         console.warn("[cron] Chokepoint fetch failed (non-fatal):", err);
         return [];
@@ -29,21 +32,29 @@ export async function GET(request: NextRequest) {
       `[cron] Fetched ${records.length} port records, ${chokepointRecords.length} chokepoint records`
     );
 
-    await saveSnapshot({
-      timestamp: new Date().toISOString(),
-      records,
-    });
+    if (records.length > 0) {
+      await saveSnapshot({
+        timestamp: new Date().toISOString(),
+        records,
+      });
+    }
 
     return NextResponse.json({
       success: true,
       recordCount: records.length,
       chokepointRecordCount: chokepointRecords.length,
       timestamp: new Date().toISOString(),
+      note: records.length === 0
+        ? "No port records fetched. The PortWatch ArcGIS service name may need updating — check Vercel function logs for details."
+        : undefined,
     });
   } catch (error) {
-    console.error("[cron] Failed to fetch port data:", error);
+    console.error("[cron] Failed:", error);
     return NextResponse.json(
-      { error: "Failed to fetch port data" },
+      {
+        error: "Failed to fetch port data",
+        detail: error instanceof Error ? error.message : String(error),
+      },
       { status: 500 }
     );
   }

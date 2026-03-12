@@ -1,14 +1,25 @@
 import { MALAYSIAN_PORTS } from "./ports";
 
-// IMF PortWatch ArcGIS Hub dataset endpoints
-// These are the public ArcGIS Feature Service layers for PortWatch data
-const PORTWATCH_HUB_BASE =
-  "https://portwatch-imf-dataviz.hub.arcgis.com/api/download/v1/items";
+// IMF PortWatch dataset IDs on ArcGIS Hub
+const DAILY_PORT_ACTIVITY_DATASET_IDS = [
+  "959214444157458aad969389b3ebe1a0",
+  "75619cb86e5f4beeb7dab9629d861acf",
+];
 
-// Known PortWatch ArcGIS Feature Service base
-// The actual feature service IDs may change — these are discovered from the Hub
-const ARCGIS_FEATURE_SERVICE =
-  "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services";
+// ArcGIS Feature Service bases to try (IMF may use different org IDs)
+const ARCGIS_BASES = [
+  "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services",
+  "https://services9.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services",
+];
+
+// Known and possible service names for the PortWatch feature layer
+const SERVICE_NAMES = [
+  "Daily_Port_Activity_Data_and_Trade_Estimates",
+  "PortWatch_Portal_Portal_Portal",
+  "PortWatch_Portal",
+  "daily_port_activity",
+  "port_activity_daily",
+];
 
 export interface PortActivityRecord {
   portId: string;
@@ -31,7 +42,7 @@ export interface PortWatchResponse {
 
 /**
  * Query PortWatch ArcGIS Feature Service for a specific port's data.
- * Uses the ArcGIS REST API query endpoint.
+ * Tries multiple service names and falls back to Hub GeoJSON download.
  */
 export async function fetchPortActivity(
   portUnlocode: string,
@@ -41,8 +52,6 @@ export async function fetchPortActivity(
   since.setDate(since.getDate() - daysBack);
   const sinceStr = since.toISOString().split("T")[0];
 
-  // Query the PortWatch feature layer
-  // The feature service exposes port-level daily activity
   const params = new URLSearchParams({
     where: `port_code='${portUnlocode}' AND date_str>='${sinceStr}'`,
     outFields: "*",
@@ -51,38 +60,73 @@ export async function fetchPortActivity(
     f: "json",
   });
 
-  const url = `${ARCGIS_FEATURE_SERVICE}/PortWatch_Portal_Portal_Portal/FeatureServer/0/query?${params}`;
+  // Try each ArcGIS base + service name combination
+  for (const base of ARCGIS_BASES) {
+    for (const serviceName of SERVICE_NAMES) {
+      try {
+        const url = `${base}/${serviceName}/FeatureServer/0/query?${params}`;
+        const res = await fetch(url, { next: { revalidate: 3600 } });
+        if (!res.ok) continue;
 
-  const res = await fetch(url, {
-    next: { revalidate: 3600 }, // cache for 1 hour
-  });
-
-  if (!res.ok) {
-    throw new Error(`PortWatch API error: ${res.status} ${res.statusText}`);
+        const data = await res.json();
+        if (data.features && data.features.length > 0) {
+          return data;
+        }
+        // ArcGIS returns 200 with error object for invalid service names
+        if (data.error) continue;
+      } catch {
+        continue;
+      }
+    }
   }
 
-  return res.json();
+  // Fallback: Hub GeoJSON download (contains all ports, filter client-side)
+  return fetchPortDataFromHub(portUnlocode, sinceStr);
 }
 
 /**
- * Fetch port activity data from the Hub download API (CSV/GeoJSON).
- * This is the fallback approach when the Feature Service layer ID is unknown.
+ * Fetch port activity data from the Hub download API (GeoJSON).
+ * Downloads the full dataset and filters for the requested port.
  */
-export async function fetchPortDataFromHub(
-  datasetId: string,
-  format: "geojson" | "csv" = "geojson"
-): Promise<unknown> {
-  const url = `${PORTWATCH_HUB_BASE}/${datasetId}/geojson?layers=0`;
+async function fetchPortDataFromHub(
+  portUnlocode: string,
+  sinceStr: string
+): Promise<PortWatchResponse> {
+  for (const datasetId of DAILY_PORT_ACTIVITY_DATASET_IDS) {
+    try {
+      const url = `https://portwatch-imf-dataviz.hub.arcgis.com/api/download/v1/items/${datasetId}/geojson?layers=0`;
+      const res = await fetch(url, { next: { revalidate: 3600 } });
+      if (!res.ok) continue;
 
-  const res = await fetch(url, {
-    next: { revalidate: 3600 },
-  });
+      const geojson = await res.json();
+      if (!geojson.features) continue;
 
-  if (!res.ok) {
-    throw new Error(`PortWatch Hub download error: ${res.status}`);
+      // Filter for our port and date range
+      const filtered = geojson.features
+        .filter((f: { properties: Record<string, unknown> }) => {
+          const props = f.properties;
+          const code = String(props.port_code || props.portcode || props.locode || "");
+          const date = String(props.date_str || props.date || "");
+          return code === portUnlocode && date >= sinceStr;
+        })
+        .map((f: { properties: Record<string, unknown>; geometry?: { coordinates?: number[] } }) => ({
+          attributes: f.properties,
+          geometry: f.geometry?.coordinates
+            ? { x: f.geometry.coordinates[0] as number, y: f.geometry.coordinates[1] as number }
+            : undefined,
+        }));
+
+      if (filtered.length > 0) {
+        return { features: filtered };
+      }
+    } catch {
+      continue;
+    }
   }
 
-  return res.json();
+  // All sources exhausted — return empty instead of throwing
+  console.warn(`No PortWatch data found for ${portUnlocode}`);
+  return { features: [] };
 }
 
 /**
