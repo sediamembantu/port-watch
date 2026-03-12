@@ -58,6 +58,7 @@ export async function fetchAllMalaysianPorts(
       const params = new URLSearchParams({
         where,
         outFields: "*",
+        orderByFields: "date DESC",
         resultRecordCount: "2000",
         f: "json",
       });

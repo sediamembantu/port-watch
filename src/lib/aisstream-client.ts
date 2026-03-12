@@ -76,17 +76,20 @@ export interface AISMessage {
  * Create the AISStream subscription message for Malaysian port areas.
  */
 export function buildSubscriptionMessage(apiKey: string): string {
-  // Combine all port geofences + Malacca Strait into bounding boxes
-  const boundingBoxes = [
-    ...Object.values(PORT_GEOFENCES),
-    MALACCA_STRAIT_GEOFENCE,
-  ];
-
-  return JSON.stringify({
-    APIKey: apiKey,
-    BoundingBoxes: boundingBoxes,
+  // Single large bounding box covering all Malaysian waters + Malacca Strait
+  // From ~0.5°N to ~7°N, 99°E to 119°E (covers Peninsula + East Malaysia)
+  const msg = {
+    Apikey: apiKey,
+    BoundingBoxes: [
+      [
+        [0.5, 99.0],
+        [7.5, 119.0],
+      ],
+    ],
     FilterMessageTypes: ["PositionReport"],
-  });
+  };
+  console.log(`[aisstream] Subscription: ${JSON.stringify(msg).substring(0, 200)}`);
+  return JSON.stringify(msg);
 }
 
 /**
@@ -232,10 +235,14 @@ export async function fetchRealtimeSnapshot(
   const positions: VesselPosition[] = [];
 
   return new Promise((resolve) => {
+    console.log(`[aisstream] Connecting to ${AISSTREAM_WS_URL}...`);
     const ws = new WebSocket(AISSTREAM_WS_URL);
+    ws.binaryType = "arraybuffer";
     let messageCount = 0;
+    let rawMessageCount = 0;
 
     const timeout = setTimeout(() => {
+      console.log(`[aisstream] Timeout reached. ${messageCount} parsed, ${rawMessageCount} raw messages`);
       ws.close();
       resolve({
         portVessels: aggregatePortVessels(positions),
@@ -245,23 +252,42 @@ export async function fetchRealtimeSnapshot(
     }, durationMs);
 
     ws.onopen = () => {
-      ws.send(buildSubscriptionMessage(apiKey));
+      const subMsg = buildSubscriptionMessage(apiKey);
+      console.log(`[aisstream] Connected. Sending subscription with ${Object.keys(PORT_GEOFENCES).length + 1} bounding boxes`);
+      ws.send(subMsg);
     };
 
     ws.onmessage = (event) => {
+      rawMessageCount++;
       try {
-        const data = JSON.parse(String(event.data)) as AISMessage;
+        // Handle ArrayBuffer, Buffer, or string data
+        let text: string;
+        if (event.data instanceof ArrayBuffer) {
+          text = new TextDecoder().decode(event.data);
+        } else if (typeof event.data === "string") {
+          text = event.data;
+        } else {
+          // Buffer or other types
+          text = new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer));
+        }
+        const data = JSON.parse(text) as AISMessage;
+        if (rawMessageCount <= 3) {
+          console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
+        }
         const pos = parseAISMessage(data);
         if (pos) {
           positions.push(pos);
           messageCount++;
         }
-      } catch {
-        // Skip malformed messages
+      } catch (err) {
+        if (rawMessageCount <= 3) {
+          console.warn(`[aisstream] Parse error on message ${rawMessageCount}:`, typeof event.data, String(event.data).substring(0, 200));
+        }
       }
     };
 
-    ws.onerror = () => {
+    ws.onerror = (err) => {
+      console.error(`[aisstream] WebSocket error:`, err);
       clearTimeout(timeout);
       ws.close();
       resolve({
@@ -269,6 +295,10 @@ export async function fetchRealtimeSnapshot(
         malaccaTransits: countMalaccaTransits(positions),
         messagesReceived: messageCount,
       });
+    };
+
+    ws.onclose = (event) => {
+      console.log(`[aisstream] Connection closed: code=${event.code}, reason=${event.reason}`);
     };
   });
 }

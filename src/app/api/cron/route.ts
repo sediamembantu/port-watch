@@ -32,21 +32,34 @@ export async function GET(request: NextRequest) {
       `[cron] Fetched ${records.length} port records, ${chokepointRecords.length} chokepoint records`
     );
 
+    let saved = false;
+    let saveError: string | undefined;
+
     if (records.length > 0) {
-      await saveSnapshot({
-        timestamp: new Date().toISOString(),
-        records,
-      });
+      try {
+        saved = await saveSnapshot({
+          timestamp: new Date().toISOString(),
+          records,
+        });
+      } catch (err) {
+        saveError = err instanceof Error ? err.message : String(err);
+        console.error("[cron] Redis save failed:", saveError);
+      }
     }
+
+    // List KV/Redis env vars for debugging
+    const kvEnvVars = Object.keys(process.env).filter(
+      (k) => k.includes("KV") || k.includes("REDIS") || k.includes("UPSTASH") || k.includes("STORAGE")
+    );
 
     return NextResponse.json({
       success: true,
       recordCount: records.length,
       chokepointRecordCount: chokepointRecords.length,
+      saved,
+      saveError,
+      kvEnvVars,
       timestamp: new Date().toISOString(),
-      note: records.length === 0
-        ? "No port records fetched. The PortWatch ArcGIS service name may need updating — check Vercel function logs for details."
-        : undefined,
     });
   } catch (error) {
     console.error("[cron] Failed:", error);

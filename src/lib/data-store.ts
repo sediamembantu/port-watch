@@ -10,8 +10,8 @@ const LATEST_KEY = "portwatch:latest-snapshot";
 const ARCHIVE_PREFIX = "portwatch:snapshot:";
 
 function getRedis(): Redis | null {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || process.env.STORAGE_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || process.env.STORAGE_TOKEN;
   if (!url || !token) return null;
   return new Redis({ url, token });
 }
@@ -19,11 +19,11 @@ function getRedis(): Redis | null {
 /**
  * Save a data snapshot to Redis.
  */
-export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
+export async function saveSnapshot(snapshot: DataSnapshot): Promise<boolean> {
   const redis = getRedis();
   if (!redis) {
     console.warn("[data-store] Redis not configured, skipping save");
-    return;
+    return false;
   }
 
   const dateStr = new Date().toISOString().split("T")[0];
@@ -32,6 +32,7 @@ export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
     redis.set(LATEST_KEY, JSON.stringify(snapshot)),
     redis.set(`${ARCHIVE_PREFIX}${dateStr}`, JSON.stringify(snapshot), { ex: 90 * 86400 }),
   ]);
+  return true;
 }
 
 /**
