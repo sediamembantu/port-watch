@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Portch Watch - Malaysian Port Disruption Monitor",
+  title: "Portwatch - Malaysian Port Disruption Monitor",
   description:
     "Monitor Malaysian port activity and supply chain disruptions using IMF PortWatch data",
 };

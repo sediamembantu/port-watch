@@ -1,5 +1,4 @@
-import { promises as fs } from "fs";
-import path from "path";
+import { kv } from "@vercel/kv";
 import type { PortActivityRecord } from "./portwatch-client";
 
 export interface DataSnapshot {
@@ -7,49 +6,47 @@ export interface DataSnapshot {
   records: PortActivityRecord[];
 }
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const SNAPSHOT_FILE = path.join(DATA_DIR, "latest-snapshot.json");
+const LATEST_KEY = "portwatch:latest-snapshot";
+const ARCHIVE_PREFIX = "portwatch:snapshot:";
 
 /**
- * Save a data snapshot to disk.
- * In production, replace with Vercel KV/Postgres.
+ * Save a data snapshot to Vercel KV.
  */
 export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(SNAPSHOT_FILE, JSON.stringify(snapshot, null, 2));
-
-  // Also save a dated archive
   const dateStr = new Date().toISOString().split("T")[0];
-  const archiveFile = path.join(DATA_DIR, `snapshot-${dateStr}.json`);
-  await fs.writeFile(archiveFile, JSON.stringify(snapshot, null, 2));
+
+  await Promise.all([
+    kv.set(LATEST_KEY, snapshot),
+    kv.set(`${ARCHIVE_PREFIX}${dateStr}`, snapshot, { ex: 90 * 86400 }), // expire after 90 days
+  ]);
 }
 
 /**
- * Load the latest data snapshot from disk.
+ * Load the latest data snapshot.
  */
 export async function getLatestSnapshot(): Promise<DataSnapshot | null> {
   try {
-    const raw = await fs.readFile(SNAPSHOT_FILE, "utf-8");
-    return JSON.parse(raw);
+    return await kv.get<DataSnapshot>(LATEST_KEY);
   } catch {
     return null;
   }
 }
 
 /**
- * Load all archived snapshots (for historical charts).
+ * Load archived snapshots for historical charts.
  */
 export async function getArchivedSnapshots(): Promise<DataSnapshot[]> {
   try {
-    const files = await fs.readdir(DATA_DIR);
-    const snapshots: DataSnapshot[] = [];
+    const keys = await kv.keys(`${ARCHIVE_PREFIX}*`);
+    if (keys.length === 0) return [];
 
-    for (const file of files.filter((f) => f.startsWith("snapshot-"))) {
-      const raw = await fs.readFile(path.join(DATA_DIR, file), "utf-8");
-      snapshots.push(JSON.parse(raw));
+    const snapshots: DataSnapshot[] = [];
+    for (const key of keys.sort()) {
+      const snapshot = await kv.get<DataSnapshot>(key);
+      if (snapshot) snapshots.push(snapshot);
     }
 
-    return snapshots.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return snapshots;
   } catch {
     return [];
   }
