@@ -1,20 +1,19 @@
 /**
  * OpenDOSM / data.gov.my API client for Malaysian trade statistics.
  *
- * API base: https://api.data.gov.my
- * Docs: https://developer.data.gov.my/
- *
- * Provides trade volume context to complement port-level disruption data.
+ * Dataset: trade_sitc_1d (Monthly Trade by SITC Section)
+ * API: https://api.data.gov.my/data-catalogue?id=trade_sitc_1d
+ * Source: https://open.dosm.gov.my/data-catalogue/trade_sitc_1d
  */
 
-const DOSM_API_BASE = "https://api.data.gov.my";
+const DOSM_API = "https://api.data.gov.my/data-catalogue";
 
 export interface TradeRecord {
   date: string;
   exports: number; // RM millions
   imports: number; // RM millions
   tradeBalance: number; // RM millions
-  category: string;
+  category: string; // SITC section or "overall"
 }
 
 export interface TradeSummary {
@@ -40,132 +39,47 @@ export interface TradeSummary {
 
 /**
  * Fetch Malaysia's external trade data from OpenDOSM.
- * Tries multiple known dataset endpoints.
+ * Uses the trade_sitc_1d dataset (Monthly Trade by SITC Section).
  */
 export async function fetchTradeData(
   monthsBack: number = 12
-): Promise<TradeRecord[]> {
-  // Known dataset slugs for trade data on data.gov.my
-  const datasetSlugs = [
-    "trade",
-    "external-trade",
-    "tradestat",
-    "trade-monthly",
-  ];
-
-  for (const slug of datasetSlugs) {
-    try {
-      const records = await queryDOSMDataset(slug, monthsBack);
-      if (records.length > 0) return records;
-    } catch {
-      continue;
-    }
-  }
-
-  // Fallback: try the catalog search
-  try {
-    return await searchAndFetchTrade(monthsBack);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Query a specific DOSM dataset.
- */
-async function queryDOSMDataset(
-  slug: string,
-  monthsBack: number
 ): Promise<TradeRecord[]> {
   const since = new Date();
   since.setMonth(since.getMonth() - monthsBack);
   const sinceStr = since.toISOString().split("T")[0];
 
   const params = new URLSearchParams({
+    id: "trade_sitc_1d",
     date_start: sinceStr,
-    limit: "100",
+    limit: "200",
     sort: "-date",
   });
 
-  const url = `${DOSM_API_BASE}/data-catalogue/${slug}?${params}`;
-  const res = await fetch(url, { next: { revalidate: 86400 } }); // cache 24h
+  const url = `${DOSM_API}?${params}`;
+  const res = await fetch(url, { next: { revalidate: 86400 } });
 
   if (!res.ok) return [];
 
-  const data = await res.json();
-  return normalizeTradeData(data);
-}
-
-/**
- * Search the DOSM catalog for trade-related datasets.
- */
-async function searchAndFetchTrade(
-  monthsBack: number
-): Promise<TradeRecord[]> {
-  // Try the catalog endpoint
-  const searchUrl = `${DOSM_API_BASE}/data-catalogue?search=trade&limit=5`;
-  const searchRes = await fetch(searchUrl, { next: { revalidate: 86400 } });
-
-  if (!searchRes.ok) return [];
-
-  const catalog = await searchRes.json();
-  const datasets = Array.isArray(catalog)
-    ? catalog
-    : catalog.data || catalog.results || [];
-
-  // Look for trade-related datasets
-  for (const ds of datasets) {
-    const id = ds.id || ds.slug || ds.meta?.id;
-    if (!id) continue;
-
-    const name = String(ds.title || ds.name || "").toLowerCase();
-    if (
-      name.includes("trade") ||
-      name.includes("export") ||
-      name.includes("import")
-    ) {
-      try {
-        const records = await queryDOSMDataset(id, monthsBack);
-        if (records.length > 0) return records;
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return [];
-}
-
-/**
- * Normalize various DOSM response formats into TradeRecords.
- */
-function normalizeTradeData(data: unknown): TradeRecord[] {
-  // Handle different response structures
-  const items: Record<string, unknown>[] = Array.isArray(data)
-    ? data
-    : (data as Record<string, unknown>)?.data
-      ? (
-          (data as Record<string, unknown[]>).data || []
-        ).filter(
-          (item): item is Record<string, unknown> =>
-            typeof item === "object" && item !== null
-        )
-      : [];
+  const data: unknown = await res.json();
+  const items = Array.isArray(data) ? data : [];
 
   return items
+    .filter(
+      (item): item is Record<string, unknown> =>
+        typeof item === "object" && item !== null
+    )
     .map((item) => {
-      const date = String(
-        item.date || item.period || item.month || ""
-      );
-      const exports = Number(item.exports || item.export_value || item.x || 0);
-      const imports = Number(item.imports || item.import_value || item.m || 0);
+      const date = String(item.date || "");
+      const exports = Number(item.exports || 0);
+      const imports = Number(item.imports || 0);
+      const section = String(item.sitc_section ?? item.section ?? "overall");
 
       return {
         date,
         exports,
         imports,
         tradeBalance: exports - imports,
-        category: String(item.category || item.section || "Total"),
+        category: section,
       };
     })
     .filter((r) => r.date);
@@ -187,10 +101,8 @@ export function computeTradeSummary(records: TradeRecord[]): TradeSummary {
     };
   }
 
-  // Get totals (aggregate "Total" category or sum all)
-  const totals = records.filter(
-    (r) => r.category === "Total" || r.category === ""
-  );
+  // Use "overall" rows for totals
+  const totals = records.filter((r) => r.category === "overall");
   const useRecords = totals.length > 0 ? totals : records;
 
   const sorted = [...useRecords].sort((a, b) =>
@@ -201,12 +113,15 @@ export function computeTradeSummary(records: TradeRecord[]): TradeSummary {
   const latestMonth = latest.date;
 
   // Monthly trend
-  const monthlyTrend = sorted.slice(0, 12).reverse().map((r) => ({
-    date: r.date,
-    exports: r.exports,
-    imports: r.imports,
-    balance: r.tradeBalance,
-  }));
+  const monthlyTrend = sorted
+    .slice(0, 12)
+    .reverse()
+    .map((r) => ({
+      date: r.date,
+      exports: r.exports,
+      imports: r.imports,
+      balance: r.tradeBalance,
+    }));
 
   // Year-over-year change
   const yearAgo = sorted.find((r) => {
@@ -225,20 +140,15 @@ export function computeTradeSummary(records: TradeRecord[]): TradeSummary {
     ? ((latest.imports - yearAgo.imports) / yearAgo.imports) * 100
     : 0;
 
-  // Top categories (from non-total records)
-  const byCategory = records
-    .filter((r) => r.category !== "Total" && r.category !== "")
-    .reduce(
-      (acc, r) => {
-        if (!acc[r.category]) acc[r.category] = 0;
-        acc[r.category] += r.exports + r.imports;
-        return acc;
-      },
-      {} as Record<string, number>
-    );
-
-  const topCategories = Object.entries(byCategory)
-    .map(([category, value]) => ({ category, value }))
+  // Top categories (from non-overall records, latest month only)
+  const latestSections = records.filter(
+    (r) => r.date === latestMonth && r.category !== "overall"
+  );
+  const topCategories = latestSections
+    .map((r) => ({
+      category: getSITCLabel(r.category),
+      value: r.exports + r.imports,
+    }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 5);
 
@@ -254,4 +164,21 @@ export function computeTradeSummary(records: TradeRecord[]): TradeSummary {
       imports: Math.round(yoyImports * 10) / 10,
     },
   };
+}
+
+/** Map SITC 1-digit codes to readable labels. */
+function getSITCLabel(code: string): string {
+  const labels: Record<string, string> = {
+    "0": "Food & Live Animals",
+    "1": "Beverages & Tobacco",
+    "2": "Crude Materials",
+    "3": "Mineral Fuels",
+    "4": "Animal & Vegetable Oils",
+    "5": "Chemicals",
+    "6": "Manufactured Goods",
+    "7": "Machinery & Transport",
+    "8": "Misc. Manufactured",
+    "9": "Other Commodities",
+  };
+  return labels[code] || `SITC ${code}`;
 }
