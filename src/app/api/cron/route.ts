@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllMalaysianPorts } from "@/lib/portwatch-client";
 import { saveSnapshot } from "@/lib/data-store";
+import { fetchMalaccaChokepointData } from "@/lib/chokepoint-client";
 
 export const maxDuration = 60; // Allow up to 60s for fetching all ports
 
@@ -14,10 +15,19 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    console.log("[cron] Fetching Malaysian port data...");
-    const records = await fetchAllMalaysianPorts(30);
+    console.log("[cron] Fetching Malaysian port data + chokepoint data...");
 
-    console.log(`[cron] Fetched ${records.length} records across all ports`);
+    const [records, chokepointRecords] = await Promise.all([
+      fetchAllMalaysianPorts(30),
+      fetchMalaccaChokepointData(30).catch((err) => {
+        console.warn("[cron] Chokepoint fetch failed (non-fatal):", err);
+        return [];
+      }),
+    ]);
+
+    console.log(
+      `[cron] Fetched ${records.length} port records, ${chokepointRecords.length} chokepoint records`
+    );
 
     await saveSnapshot({
       timestamp: new Date().toISOString(),
@@ -27,6 +37,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       recordCount: records.length,
+      chokepointRecordCount: chokepointRecords.length,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
