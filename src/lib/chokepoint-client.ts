@@ -1,15 +1,14 @@
 /**
  * IMF PortWatch Chokepoint Monitoring — Strait of Malacca
  *
- * Dataset: Daily Chokepoint Transit data from PortWatch ArcGIS Hub
- * Dataset ID: 42132aa4e2fc4d41bdaf9a445f688931
+ * Uses the Daily_Chokepoints_Data service from PortWatch ArcGIS.
+ * Fields: date (timestamp ms), portid, portname, n_total, capacity, etc.
  */
 
 // ArcGIS Feature Service base (correct org ID: weJ1QsnbMYJlCHdG, services9 only)
 const ARCGIS_BASE =
   "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services";
 
-// Daily chokepoint service (discovered via /api/debug)
 const DAILY_CHOKEPOINTS_SERVICE = "Daily_Chokepoints_Data";
 
 export interface ChokepointRecord {
@@ -36,77 +35,62 @@ export async function fetchMalaccaChokepointData(
 ): Promise<ChokepointRecord[]> {
   const since = new Date();
   since.setDate(since.getDate() - daysBack);
-  const sinceStr = since.toISOString().split("T")[0];
+  const sinceMs = since.getTime();
 
-  const params = new URLSearchParams({
-    where: `(chokepoint_name LIKE '%Malacca%' OR chokepoint_name LIKE '%malacca%' OR chokepoint_name LIKE '%Singapore%') AND date_str>='${sinceStr}'`,
-    outFields: "*",
-    orderByFields: "date_str DESC",
-    resultRecordCount: "200",
-    f: "json",
-  });
+  // The date field is esriFieldTypeDate (Unix timestamp in ms)
+  // portname contains the chokepoint name (e.g. "Strait of Malacca")
+  const whereClauses = [
+    `(portname LIKE '%Malacca%' OR portname LIKE '%malacca%' OR portname LIKE '%Singapore%') AND date >= ${sinceMs}`,
+    `(portname LIKE '%Malacca%' OR portname LIKE '%malacca%' OR portname LIKE '%Singapore%')`,
+  ];
 
-  // Query Daily_Chokepoints_Data service directly
-  try {
-    const url = `${ARCGIS_BASE}/${DAILY_CHOKEPOINTS_SERVICE}/FeatureServer/0/query?${params}`;
-    const res = await fetch(url, { next: { revalidate: 3600 } });
+  for (const where of whereClauses) {
+    try {
+      const params = new URLSearchParams({
+        where,
+        outFields: "*",
+        resultRecordCount: "200",
+        f: "json",
+      });
+      const url = `${ARCGIS_BASE}/${DAILY_CHOKEPOINTS_SERVICE}/FeatureServer/0/query?${params}`;
+      console.log(`[chokepoint] Trying: ${where.substring(0, 80)}...`);
+      const res = await fetch(url, { next: { revalidate: 3600 } });
 
-    if (res.ok) {
+      if (!res.ok) continue;
+
       const data = await res.json();
-      if (data.features && data.features.length > 0) {
-        return normalizeChokepointData(data.features);
+      if (data.error) {
+        console.warn(`[chokepoint] ArcGIS error: ${data.error.message}`);
+        continue;
       }
+
+      if (data.features && data.features.length > 0) {
+        console.log(`[chokepoint] Got ${data.features.length} records`);
+        const records = normalizeChokepointData(data.features);
+        // If we used the no-date fallback, filter client-side
+        if (!where.includes("date >=")) {
+          const sinceStr = since.toISOString().split("T")[0];
+          return records.filter((r) => r.date >= sinceStr);
+        }
+        return records;
+      }
+    } catch (error) {
+      console.error("[chokepoint] Query failed:", error);
+      continue;
     }
-  } catch {
-    // Fall through to Hub fallback
   }
 
-  // Fallback: try the Hub download API
-  try {
-    return await fetchChokepointFromHub();
-  } catch {
-    return [];
-  }
+  console.warn("[chokepoint] No Malacca data found");
+  return [];
 }
 
 /**
- * Fallback: fetch chokepoint data via ArcGIS Hub download API.
+ * Convert Unix timestamp (ms) to YYYY-MM-DD string.
  */
-async function fetchChokepointFromHub(): Promise<ChokepointRecord[]> {
-  const datasetId = "42132aa4e2fc4d41bdaf9a445f688931";
-  const url = `https://portwatch-imf-dataviz.hub.arcgis.com/api/download/v1/items/${datasetId}/geojson?layers=0`;
-
-  const res = await fetch(url, { next: { revalidate: 3600 } });
-  if (!res.ok) return [];
-
-  const geojson = await res.json();
-  if (!geojson.features) return [];
-
-  // Filter for Malacca Strait entries
-  const malaccaFeatures = geojson.features.filter(
-    (f: { properties: Record<string, unknown> }) => {
-      const name = String(
-        f.properties.chokepoint_name || f.properties.name || ""
-      ).toLowerCase();
-      return name.includes("malacca") || name.includes("singapore");
-    }
-  );
-
-  return malaccaFeatures.map(
-    (f: { properties: Record<string, unknown> }) => {
-      const p = f.properties;
-      return {
-        date: String(p.date_str || p.date || ""),
-        chokepointName: String(
-          p.chokepoint_name || p.name || "Strait of Malacca"
-        ),
-        transitCount: Number(p.n_vessels || p.transit_count || 0),
-        avgWaitDays: Number(p.avg_wait || p.wait_days || 0),
-        congestionIndex: Number(p.congestion || p.congestion_index || 0),
-        trend: "stable" as const,
-      };
-    }
-  );
+function timestampToDateStr(ts: unknown): string {
+  const n = Number(ts);
+  if (isNaN(n) || n === 0) return String(ts || "");
+  return new Date(n).toISOString().split("T")[0];
 }
 
 function normalizeChokepointData(
@@ -115,13 +99,11 @@ function normalizeChokepointData(
   return features.map((f) => {
     const a = f.attributes;
     return {
-      date: String(a.date_str || a.Date || ""),
-      chokepointName: String(
-        a.chokepoint_name || a.name || "Strait of Malacca"
-      ),
-      transitCount: Number(a.n_vessels || a.transit_count || 0),
-      avgWaitDays: Number(a.avg_wait || a.wait_days || 0),
-      congestionIndex: Number(a.congestion || a.congestion_index || 0),
+      date: timestampToDateStr(a.date),
+      chokepointName: String(a.portname || "Strait of Malacca"),
+      transitCount: Number(a.n_total || 0),
+      avgWaitDays: 0, // not available in this dataset
+      congestionIndex: 0, // computed in summary from transit trends
       trend: "stable" as const,
     };
   });
@@ -179,12 +161,12 @@ export function computeChokepointSummary(
     };
   });
 
-  // Determine overall status from congestion index
-  const latestCongestion = withTrends[0]?.congestionIndex ?? 0;
+  // Determine status from transit volume change
+  const changePct = Math.abs(weeklyChange);
   const status: "normal" | "elevated" | "congested" =
-    latestCongestion < 0.3
+    changePct < 10
       ? "normal"
-      : latestCongestion < 0.6
+      : changePct < 25
         ? "elevated"
         : "congested";
 
