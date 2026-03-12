@@ -234,6 +234,7 @@ export async function fetchRealtimeSnapshot(
   return new Promise((resolve) => {
     console.log(`[aisstream] Connecting to ${AISSTREAM_WS_URL}...`);
     const ws = new WebSocket(AISSTREAM_WS_URL);
+    ws.binaryType = "arraybuffer";
     let messageCount = 0;
     let rawMessageCount = 0;
 
@@ -253,13 +254,19 @@ export async function fetchRealtimeSnapshot(
       ws.send(subMsg);
     };
 
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
       rawMessageCount++;
       try {
-        // Handle Blob or string data
-        const text = event.data instanceof Blob
-          ? await event.data.text()
-          : String(event.data);
+        // Handle ArrayBuffer, Buffer, or string data
+        let text: string;
+        if (event.data instanceof ArrayBuffer) {
+          text = new TextDecoder().decode(event.data);
+        } else if (typeof event.data === "string") {
+          text = event.data;
+        } else {
+          // Buffer or other types
+          text = new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer));
+        }
         const data = JSON.parse(text) as AISMessage;
         if (rawMessageCount <= 3) {
           console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
