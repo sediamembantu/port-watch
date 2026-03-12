@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
 import type { PortActivityRecord } from "./portwatch-client";
 
 export interface DataSnapshot {
@@ -9,15 +9,28 @@ export interface DataSnapshot {
 const LATEST_KEY = "portwatch:latest-snapshot";
 const ARCHIVE_PREFIX = "portwatch:snapshot:";
 
+function getRedis(): Redis | null {
+  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (!url || !token) return null;
+  return new Redis({ url, token });
+}
+
 /**
- * Save a data snapshot to Vercel KV.
+ * Save a data snapshot to Redis.
  */
 export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
+  const redis = getRedis();
+  if (!redis) {
+    console.warn("[data-store] Redis not configured, skipping save");
+    return;
+  }
+
   const dateStr = new Date().toISOString().split("T")[0];
 
   await Promise.all([
-    kv.set(LATEST_KEY, snapshot),
-    kv.set(`${ARCHIVE_PREFIX}${dateStr}`, snapshot, { ex: 90 * 86400 }), // expire after 90 days
+    redis.set(LATEST_KEY, JSON.stringify(snapshot)),
+    redis.set(`${ARCHIVE_PREFIX}${dateStr}`, JSON.stringify(snapshot), { ex: 90 * 86400 }),
   ]);
 }
 
@@ -26,7 +39,12 @@ export async function saveSnapshot(snapshot: DataSnapshot): Promise<void> {
  */
 export async function getLatestSnapshot(): Promise<DataSnapshot | null> {
   try {
-    return await kv.get<DataSnapshot>(LATEST_KEY);
+    const redis = getRedis();
+    if (!redis) return null;
+
+    const data = await redis.get<string>(LATEST_KEY);
+    if (!data) return null;
+    return typeof data === "string" ? JSON.parse(data) : data as unknown as DataSnapshot;
   } catch {
     return null;
   }
@@ -37,13 +55,19 @@ export async function getLatestSnapshot(): Promise<DataSnapshot | null> {
  */
 export async function getArchivedSnapshots(): Promise<DataSnapshot[]> {
   try {
-    const keys = await kv.keys(`${ARCHIVE_PREFIX}*`);
+    const redis = getRedis();
+    if (!redis) return [];
+
+    const keys = await redis.keys(`${ARCHIVE_PREFIX}*`);
     if (keys.length === 0) return [];
 
     const snapshots: DataSnapshot[] = [];
     for (const key of keys.sort()) {
-      const snapshot = await kv.get<DataSnapshot>(key);
-      if (snapshot) snapshots.push(snapshot);
+      const data = await redis.get<string>(key);
+      if (data) {
+        const snapshot = typeof data === "string" ? JSON.parse(data) : data as unknown as DataSnapshot;
+        snapshots.push(snapshot);
+      }
     }
 
     return snapshots;
