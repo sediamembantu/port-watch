@@ -26,9 +26,17 @@ export interface PortWatchResponse {
   }>;
 }
 
+// Build a portid IN clause from our config
+const PORT_IDS = MALAYSIAN_PORTS.map((p) => `'${p.portWatchId}'`).join(",");
+
+// Lookup map: PortWatch portid -> our port config
+const PORT_BY_WATCH_ID = new Map(
+  MALAYSIAN_PORTS.map((p) => [p.portWatchId, p])
+);
+
 /**
  * Fetch activity data for all monitored Malaysian ports.
- * Uses a single query with ISO3='MYS' to get all ports at once.
+ * Uses a single query filtering by known portid values.
  */
 export async function fetchAllMalaysianPorts(
   daysBack: number = 30
@@ -37,68 +45,66 @@ export async function fetchAllMalaysianPorts(
   since.setDate(since.getDate() - daysBack);
   const sinceStr = since.toISOString().split("T")[0];
 
-  try {
-    const params = new URLSearchParams({
-      where: `ISO3='MYS' AND date>='${sinceStr}'`,
-      outFields: "*",
-      resultRecordCount: "2000",
-      f: "json",
-    });
-    const url = `${ARCGIS_BASE}/${DAILY_PORTS_SERVICE}/FeatureServer/0/query?${params}`;
-    const res = await fetch(url, { next: { revalidate: 3600 } });
+  // Try multiple date filter syntaxes since esriFieldTypeDateOnly
+  // may need DATE keyword or string comparison
+  const whereClauses = [
+    `portid IN (${PORT_IDS}) AND date >= DATE '${sinceStr}'`,
+    `portid IN (${PORT_IDS}) AND date >= '${sinceStr}'`,
+    `portid IN (${PORT_IDS})`,
+  ];
 
-    if (!res.ok) {
-      console.warn(`[portwatch] ArcGIS returned ${res.status}`);
-      return [];
+  for (const where of whereClauses) {
+    try {
+      const params = new URLSearchParams({
+        where,
+        outFields: "*",
+        resultRecordCount: "2000",
+        f: "json",
+      });
+      const url = `${ARCGIS_BASE}/${DAILY_PORTS_SERVICE}/FeatureServer/0/query?${params}`;
+      console.log(`[portwatch] Trying: ${where}`);
+      const res = await fetch(url, { next: { revalidate: 3600 } });
+
+      if (!res.ok) {
+        console.warn(`[portwatch] HTTP ${res.status} for query`);
+        continue;
+      }
+
+      const data = await res.json();
+
+      if (data.error) {
+        console.warn(`[portwatch] ArcGIS error: ${data.error.message}`);
+        continue;
+      }
+
+      if (data.features && data.features.length > 0) {
+        console.log(`[portwatch] Got ${data.features.length} records`);
+
+        // If we used the no-date fallback, filter client-side
+        const records = normalizePortActivity(data.features);
+        if (where.includes("date")) {
+          return records;
+        }
+        // Client-side date filter for the fallback query
+        return records.filter((r) => r.date >= sinceStr);
+      }
+    } catch (error) {
+      console.error("[portwatch] Query failed:", error);
+      continue;
     }
-
-    const data = await res.json();
-    if (data.error) {
-      console.warn("[portwatch] ArcGIS error:", data.error.message);
-      return [];
-    }
-
-    if (!data.features || data.features.length === 0) {
-      console.warn("[portwatch] No features returned for MYS");
-      return [];
-    }
-
-    console.log(`[portwatch] Fetched ${data.features.length} MYS records`);
-    return normalizePortActivity(data.features);
-  } catch (error) {
-    console.error("[portwatch] Failed to fetch Malaysian port data:", error);
-    return [];
   }
-}
 
-/**
- * Map an ArcGIS portname to our MALAYSIAN_PORTS config entry.
- * Uses fuzzy matching since ArcGIS names may differ slightly.
- */
-function matchPort(apiPortName: string) {
-  const name = apiPortName.toLowerCase();
-  return MALAYSIAN_PORTS.find((p) => {
-    const pName = p.name.toLowerCase();
-    // Check if either name contains the other, or key words match
-    return (
-      name.includes(pName) ||
-      pName.includes(name) ||
-      name.includes(pName.split(" ")[0])
-    );
-  });
+  console.warn("[portwatch] All queries returned 0 results");
+  return [];
 }
 
 /**
  * Transform raw PortWatch Daily_Ports_Data attributes into our normalized format.
  *
  * Actual fields from the API:
- *   date, portid, portname, country, ISO3,
+ *   date (DateOnly), portid, portname, country, ISO3,
  *   portcalls (total), portcalls_container, portcalls_dry_bulk, etc.
- *   import (total trade estimate), import_container, etc.
- *   export (total trade estimate), export_container, etc.
- *
- * There is no disruption_score in the raw data — we derive a simple
- * activity deviation metric later in computeDisruptionSummary.
+ *   import (total trade estimate), export (total trade estimate)
  */
 export function normalizePortActivity(
   features: PortWatchResponse["features"]
@@ -107,8 +113,8 @@ export function normalizePortActivity(
 
   for (const f of features) {
     const a = f.attributes;
-    const apiPortName = String(a.portname || "");
-    const port = matchPort(apiPortName);
+    const watchId = String(a.portid || "");
+    const port = PORT_BY_WATCH_ID.get(watchId);
 
     // Skip ports not in our monitored list
     if (!port) continue;
@@ -121,7 +127,7 @@ export function normalizePortActivity(
       vesselCount: Number(a.portcalls || 0),
       importIndex: Number(a.import || 0),
       exportIndex: Number(a.export || 0),
-      // No raw congestion/disruption in the API — set to 0, computed later
+      // No raw congestion/disruption in the API — computed in summary
       congestionIndex: 0,
       disruptionScore: 0,
     });

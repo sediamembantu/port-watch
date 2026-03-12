@@ -1,5 +1,6 @@
 export interface MalaysianPort {
   id: string;
+  portWatchId: string; // PortWatch API portid (e.g. "port960")
   name: string;
   unlocode: string;
   lat: number;
@@ -11,6 +12,7 @@ export interface MalaysianPort {
 export const MALAYSIAN_PORTS: MalaysianPort[] = [
   {
     id: "port-klang",
+    portWatchId: "port960",
     name: "Port Klang",
     unlocode: "MYPKG",
     lat: 3.0,
@@ -20,6 +22,7 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "tanjung-pelepas",
+    portWatchId: "port1269",
     name: "Tanjung Pelepas",
     unlocode: "MYTPP",
     lat: 1.363,
@@ -29,7 +32,8 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "penang-port",
-    name: "Penang Port",
+    portWatchId: "port1062",
+    name: "Penang",
     unlocode: "MYPEN",
     lat: 5.415,
     lng: 100.346,
@@ -38,7 +42,8 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "johor-port",
-    name: "Johor Port",
+    portWatchId: "port523",
+    name: "Johor",
     unlocode: "MYJHB",
     lat: 1.461,
     lng: 103.904,
@@ -47,7 +52,8 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "kuantan-port",
-    name: "Kuantan Port",
+    portWatchId: "port603",
+    name: "Kuantan",
     unlocode: "MYKUA",
     lat: 3.978,
     lng: 103.428,
@@ -56,7 +62,8 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "bintulu-port",
-    name: "Bintulu Port",
+    portWatchId: "port149",
+    name: "Bintulu",
     unlocode: "MYBTU",
     lat: 3.167,
     lng: 113.033,
@@ -65,7 +72,8 @@ export const MALAYSIAN_PORTS: MalaysianPort[] = [
   },
   {
     id: "kemaman-port",
-    name: "Kemaman Port",
+    portWatchId: "port556",
+    name: "Kemaman Harbor",
     unlocode: "MYKEM",
     lat: 4.233,
     lng: 103.417,
