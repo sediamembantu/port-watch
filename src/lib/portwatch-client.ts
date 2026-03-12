@@ -1,11 +1,5 @@
 import { MALAYSIAN_PORTS } from "./ports";
 
-// IMF PortWatch dataset IDs on ArcGIS Hub
-const DAILY_PORT_ACTIVITY_DATASET_IDS = [
-  "959214444157458aad969389b3ebe1a0",
-  "75619cb86e5f4beeb7dab9629d861acf",
-];
-
 // ArcGIS Feature Service base (correct org ID: weJ1QsnbMYJlCHdG, services9 only)
 const ARCGIS_BASE =
   "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services";
@@ -33,149 +27,115 @@ export interface PortWatchResponse {
 }
 
 /**
- * Query PortWatch ArcGIS Feature Service for a specific port's data.
- * Tries multiple service names and falls back to Hub GeoJSON download.
- */
-export async function fetchPortActivity(
-  portUnlocode: string,
-  daysBack: number = 30
-): Promise<PortWatchResponse> {
-  const since = new Date();
-  since.setDate(since.getDate() - daysBack);
-  const sinceStr = since.toISOString().split("T")[0];
-
-  // Query the Daily_Ports_Data service directly
-  // Try multiple field name patterns for the port code
-  const whereClauses = [
-    `portid='${portUnlocode}' AND date>='${sinceStr}'`,
-    `LOCODE='${portUnlocode}' AND date>='${sinceStr}'`,
-    `port_code='${portUnlocode}' AND date_str>='${sinceStr}'`,
-  ];
-
-  for (const whereClause of whereClauses) {
-    try {
-      const params = new URLSearchParams({
-        where: whereClause,
-        outFields: "*",
-        resultRecordCount: "100",
-        f: "json",
-      });
-      const url = `${ARCGIS_BASE}/${DAILY_PORTS_SERVICE}/FeatureServer/0/query?${params}`;
-      const res = await fetch(url, { next: { revalidate: 3600 } });
-      if (!res.ok) continue;
-
-      const data = await res.json();
-      if (data.features && data.features.length > 0) {
-        return data;
-      }
-      if (data.error) continue;
-    } catch {
-      continue;
-    }
-  }
-
-  // Fallback: Hub GeoJSON download (contains all ports, filter client-side)
-  return fetchPortDataFromHub(portUnlocode, sinceStr);
-}
-
-/**
- * Fetch port activity data from the Hub download API (GeoJSON).
- * Downloads the full dataset and filters for the requested port.
- */
-async function fetchPortDataFromHub(
-  portUnlocode: string,
-  sinceStr: string
-): Promise<PortWatchResponse> {
-  for (const datasetId of DAILY_PORT_ACTIVITY_DATASET_IDS) {
-    try {
-      const url = `https://portwatch-imf-dataviz.hub.arcgis.com/api/download/v1/items/${datasetId}/geojson?layers=0`;
-      const res = await fetch(url, { next: { revalidate: 3600 } });
-      if (!res.ok) continue;
-
-      const geojson = await res.json();
-      if (!geojson.features) continue;
-
-      // Filter for our port and date range
-      const filtered = geojson.features
-        .filter((f: { properties: Record<string, unknown> }) => {
-          const props = f.properties;
-          const code = String(props.port_code || props.portcode || props.locode || "");
-          const date = String(props.date_str || props.date || "");
-          return code === portUnlocode && date >= sinceStr;
-        })
-        .map((f: { properties: Record<string, unknown>; geometry?: { coordinates?: number[] } }) => ({
-          attributes: f.properties,
-          geometry: f.geometry?.coordinates
-            ? { x: f.geometry.coordinates[0] as number, y: f.geometry.coordinates[1] as number }
-            : undefined,
-        }));
-
-      if (filtered.length > 0) {
-        return { features: filtered };
-      }
-    } catch {
-      continue;
-    }
-  }
-
-  // All sources exhausted — return empty instead of throwing
-  console.warn(`No PortWatch data found for ${portUnlocode}`);
-  return { features: [] };
-}
-
-/**
- * Transform raw PortWatch feature attributes into our normalized format.
- */
-export function normalizePortActivity(
-  features: PortWatchResponse["features"],
-  portId: string,
-  portName: string,
-  unlocode: string
-): PortActivityRecord[] {
-  return features.map((f) => {
-    const a = f.attributes;
-    return {
-      portId,
-      portName,
-      unlocode,
-      date: String(a.date_str || a.Date || ""),
-      vesselCount: Number(a.n_vessels || a.vessel_count || 0),
-      importIndex: Number(a.import_index || a.Import || 0),
-      exportIndex: Number(a.export_index || a.Export || 0),
-      congestionIndex: Number(a.congestion || a.Congestion || 0),
-      disruptionScore: Number(a.disruption_score || a.Disruption || 0),
-    };
-  });
-}
-
-/**
  * Fetch activity data for all monitored Malaysian ports.
+ * Uses a single query with ISO3='MYS' to get all ports at once.
  */
 export async function fetchAllMalaysianPorts(
   daysBack: number = 30
 ): Promise<PortActivityRecord[]> {
-  const results = await Promise.allSettled(
-    MALAYSIAN_PORTS.map(async (port) => {
-      try {
-        const response = await fetchPortActivity(port.unlocode, daysBack);
-        return normalizePortActivity(
-          response.features || [],
-          port.id,
-          port.name,
-          port.unlocode
-        );
-      } catch (error) {
-        console.error(`Failed to fetch data for ${port.name}:`, error);
-        return [];
-      }
-    })
-  );
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+  const sinceStr = since.toISOString().split("T")[0];
 
-  return results.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+  try {
+    const params = new URLSearchParams({
+      where: `ISO3='MYS' AND date>='${sinceStr}'`,
+      outFields: "*",
+      resultRecordCount: "2000",
+      f: "json",
+    });
+    const url = `${ARCGIS_BASE}/${DAILY_PORTS_SERVICE}/FeatureServer/0/query?${params}`;
+    const res = await fetch(url, { next: { revalidate: 3600 } });
+
+    if (!res.ok) {
+      console.warn(`[portwatch] ArcGIS returned ${res.status}`);
+      return [];
+    }
+
+    const data = await res.json();
+    if (data.error) {
+      console.warn("[portwatch] ArcGIS error:", data.error.message);
+      return [];
+    }
+
+    if (!data.features || data.features.length === 0) {
+      console.warn("[portwatch] No features returned for MYS");
+      return [];
+    }
+
+    console.log(`[portwatch] Fetched ${data.features.length} MYS records`);
+    return normalizePortActivity(data.features);
+  } catch (error) {
+    console.error("[portwatch] Failed to fetch Malaysian port data:", error);
+    return [];
+  }
+}
+
+/**
+ * Map an ArcGIS portname to our MALAYSIAN_PORTS config entry.
+ * Uses fuzzy matching since ArcGIS names may differ slightly.
+ */
+function matchPort(apiPortName: string) {
+  const name = apiPortName.toLowerCase();
+  return MALAYSIAN_PORTS.find((p) => {
+    const pName = p.name.toLowerCase();
+    // Check if either name contains the other, or key words match
+    return (
+      name.includes(pName) ||
+      pName.includes(name) ||
+      name.includes(pName.split(" ")[0])
+    );
+  });
+}
+
+/**
+ * Transform raw PortWatch Daily_Ports_Data attributes into our normalized format.
+ *
+ * Actual fields from the API:
+ *   date, portid, portname, country, ISO3,
+ *   portcalls (total), portcalls_container, portcalls_dry_bulk, etc.
+ *   import (total trade estimate), import_container, etc.
+ *   export (total trade estimate), export_container, etc.
+ *
+ * There is no disruption_score in the raw data — we derive a simple
+ * activity deviation metric later in computeDisruptionSummary.
+ */
+export function normalizePortActivity(
+  features: PortWatchResponse["features"]
+): PortActivityRecord[] {
+  const records: PortActivityRecord[] = [];
+
+  for (const f of features) {
+    const a = f.attributes;
+    const apiPortName = String(a.portname || "");
+    const port = matchPort(apiPortName);
+
+    // Skip ports not in our monitored list
+    if (!port) continue;
+
+    records.push({
+      portId: port.id,
+      portName: port.name,
+      unlocode: port.unlocode,
+      date: String(a.date || ""),
+      vesselCount: Number(a.portcalls || 0),
+      importIndex: Number(a.import || 0),
+      exportIndex: Number(a.export || 0),
+      // No raw congestion/disruption in the API — set to 0, computed later
+      congestionIndex: 0,
+      disruptionScore: 0,
+    });
+  }
+
+  return records;
 }
 
 /**
  * Compute a disruption summary for nowcasting.
+ *
+ * Since the PortWatch Daily_Ports_Data doesn't include a disruption score,
+ * we compute one based on port call deviation from the rolling average.
+ * A significant drop in port calls indicates potential disruption.
  */
 export interface DisruptionSummary {
   date: string;
@@ -193,66 +153,71 @@ export interface DisruptionSummary {
 export function computeDisruptionSummary(
   records: PortActivityRecord[]
 ): DisruptionSummary {
-  const latest = records.reduce(
-    (acc, r) => {
-      if (!acc[r.portId] || r.date > acc[r.portId].date) {
-        acc[r.portId] = r;
-      }
-      return acc;
-    },
-    {} as Record<string, PortActivityRecord>
-  );
+  // Group records by port, sorted by date desc
+  const byPort: Record<string, PortActivityRecord[]> = {};
+  for (const r of records) {
+    if (!byPort[r.portId]) byPort[r.portId] = [];
+    byPort[r.portId].push(r);
+  }
 
-  const portScores = Object.values(latest).map((r) => {
-    // Compute 7-day trend for this port
-    const portRecords = records
-      .filter((pr) => pr.portId === r.portId)
-      .sort((a, b) => b.date.localeCompare(a.date));
+  const portScores = Object.entries(byPort).map(([portId, portRecords]) => {
+    const sorted = portRecords.sort((a, b) => b.date.localeCompare(a.date));
+    const latest = sorted[0];
 
-    const recent = portRecords.slice(0, 7);
-    const prior = portRecords.slice(7, 14);
+    const recent = sorted.slice(0, 7);
+    const prior = sorted.slice(7, 14);
 
     const recentAvg =
       recent.length > 0
-        ? recent.reduce((s, x) => s + x.disruptionScore, 0) / recent.length
+        ? recent.reduce((s, x) => s + x.vesselCount, 0) / recent.length
         : 0;
     const priorAvg =
       prior.length > 0
-        ? prior.reduce((s, x) => s + x.disruptionScore, 0) / prior.length
+        ? prior.reduce((s, x) => s + x.vesselCount, 0) / prior.length
         : recentAvg;
 
+    // Disruption score: how much have port calls dropped?
+    // Score 0 = normal/above average, Score 1 = severe drop
+    let score = 0;
+    if (priorAvg > 0) {
+      const dropPct = (priorAvg - recentAvg) / priorAvg;
+      score = Math.max(0, Math.min(1, dropPct));
+    }
+
     const diff = recentAvg - priorAvg;
+    const pctDiff = priorAvg > 0 ? diff / priorAvg : 0;
     const trend: "improving" | "stable" | "worsening" =
-      diff < -0.05 ? "improving" : diff > 0.05 ? "worsening" : "stable";
+      pctDiff > 0.05 ? "improving" : pctDiff < -0.05 ? "worsening" : "stable";
 
     return {
-      portId: r.portId,
-      portName: r.portName,
-      score: r.disruptionScore,
-      vesselCount: r.vesselCount,
+      portId,
+      portName: latest.portName,
+      score: Math.round(score * 100) / 100,
+      vesselCount: latest.vesselCount,
       trend,
     };
   });
 
   // Weight by trade share
-  const port = MALAYSIAN_PORTS;
   const weightedScore = portScores.reduce((sum, ps) => {
-    const p = port.find((pp) => pp.id === ps.portId);
+    const p = MALAYSIAN_PORTS.find((pp) => pp.id === ps.portId);
     const weight = p ? p.tradeShare / 100 : 0;
     return sum + ps.score * weight;
   }, 0);
 
   const alerts: string[] = [];
   for (const ps of portScores) {
-    if (ps.score > 0.7) {
-      alerts.push(`HIGH disruption at ${ps.portName} (score: ${ps.score.toFixed(2)})`);
+    if (ps.score > 0.3) {
+      alerts.push(
+        `Significant port call drop at ${ps.portName} (score: ${ps.score.toFixed(2)})`
+      );
     }
-    if (ps.trend === "worsening" && ps.score > 0.4) {
-      alerts.push(`${ps.portName} disruption is worsening`);
+    if (ps.trend === "worsening") {
+      alerts.push(`${ps.portName} activity is declining`);
     }
   }
 
-  const latestDate = Object.values(latest).reduce(
+  const latestDate = records.reduce(
     (max, r) => (r.date > max ? r.date : max),
     ""
   );
