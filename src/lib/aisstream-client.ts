@@ -237,7 +237,6 @@ export async function fetchRealtimeSnapshot(
   return new Promise((resolve) => {
     console.log(`[aisstream] Connecting to ${AISSTREAM_WS_URL}...`);
     const ws = new WebSocket(AISSTREAM_WS_URL);
-    ws.binaryType = "arraybuffer";
     let messageCount = 0;
     let rawMessageCount = 0;
 
@@ -259,29 +258,40 @@ export async function fetchRealtimeSnapshot(
 
     ws.onmessage = (event) => {
       rawMessageCount++;
-      try {
-        // Handle ArrayBuffer, Buffer, or string data
-        let text: string;
-        if (event.data instanceof ArrayBuffer) {
-          text = new TextDecoder().decode(event.data);
-        } else if (typeof event.data === "string") {
-          text = event.data;
-        } else {
-          // Buffer or other types
-          text = new TextDecoder().decode(new Uint8Array(event.data as ArrayBuffer));
+      // Convert Blob to text, then parse
+      const processText = (text: string) => {
+        try {
+          const data = JSON.parse(text) as AISMessage;
+          if (rawMessageCount <= 3) {
+            console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
+          }
+          const pos = parseAISMessage(data);
+          if (pos) {
+            positions.push(pos);
+            messageCount++;
+          }
+        } catch (err) {
+          if (rawMessageCount <= 3) {
+            console.warn(`[aisstream] JSON parse error on message ${rawMessageCount}:`, text.substring(0, 100));
+          }
         }
-        const data = JSON.parse(text) as AISMessage;
+      };
+
+      const raw = event.data;
+      if (typeof raw === "string") {
+        processText(raw);
+      } else if (raw instanceof ArrayBuffer) {
+        processText(new TextDecoder().decode(raw));
+      } else if (raw && typeof raw.arrayBuffer === "function") {
+        // Blob — convert via arrayBuffer()
+        raw.arrayBuffer().then((buf: ArrayBuffer) => {
+          processText(new TextDecoder().decode(buf));
+        });
+      } else if (Buffer.isBuffer(raw)) {
+        processText(raw.toString("utf-8"));
+      } else {
         if (rawMessageCount <= 3) {
-          console.log(`[aisstream] Message ${rawMessageCount}: type=${data.MessageType}, MMSI=${data.MetaData?.MMSI}`);
-        }
-        const pos = parseAISMessage(data);
-        if (pos) {
-          positions.push(pos);
-          messageCount++;
-        }
-      } catch (err) {
-        if (rawMessageCount <= 3) {
-          console.warn(`[aisstream] Parse error on message ${rawMessageCount}:`, typeof event.data, String(event.data).substring(0, 200));
+          console.warn(`[aisstream] Unknown data type on message ${rawMessageCount}:`, typeof raw, Object.prototype.toString.call(raw));
         }
       }
     };
