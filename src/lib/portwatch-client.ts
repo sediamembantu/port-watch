@@ -6,19 +6,17 @@ const DAILY_PORT_ACTIVITY_DATASET_IDS = [
   "75619cb86e5f4beeb7dab9629d861acf",
 ];
 
-// ArcGIS Feature Service bases to try (IMF may use different org IDs)
+// ArcGIS Feature Service bases to try (correct org ID: weJ1QsnbMYJlCHdG)
 const ARCGIS_BASES = [
-  "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services",
-  "https://services9.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services",
+  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
+  "https://services.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
 ];
 
-// Known and possible service names for the PortWatch feature layer
+// Known service names for PortWatch feature layers
 const SERVICE_NAMES = [
+  "PortWatch_ports_database",
   "Daily_Port_Activity_Data_and_Trade_Estimates",
-  "PortWatch_Portal_Portal_Portal",
   "PortWatch_Portal",
-  "daily_port_activity",
-  "port_activity_daily",
 ];
 
 export interface PortActivityRecord {
@@ -52,30 +50,38 @@ export async function fetchPortActivity(
   since.setDate(since.getDate() - daysBack);
   const sinceStr = since.toISOString().split("T")[0];
 
-  const params = new URLSearchParams({
-    where: `port_code='${portUnlocode}' AND date_str>='${sinceStr}'`,
-    outFields: "*",
-    orderByFields: "date_str DESC",
-    resultRecordCount: "100",
-    f: "json",
-  });
+  // Try different field name patterns for port code and date
+  const whereClauses = [
+    `port_code='${portUnlocode}' AND date_str>='${sinceStr}'`,
+    `locode='${portUnlocode}' AND date_str>='${sinceStr}'`,
+    `portcode='${portUnlocode}' AND date_str>='${sinceStr}'`,
+  ];
 
-  // Try each ArcGIS base + service name combination
+  // Try each ArcGIS base + service name + field name combination
   for (const base of ARCGIS_BASES) {
     for (const serviceName of SERVICE_NAMES) {
-      try {
-        const url = `${base}/${serviceName}/FeatureServer/0/query?${params}`;
-        const res = await fetch(url, { next: { revalidate: 3600 } });
-        if (!res.ok) continue;
+      for (const whereClause of whereClauses) {
+        try {
+          const params = new URLSearchParams({
+            where: whereClause,
+            outFields: "*",
+            orderByFields: "date_str DESC",
+            resultRecordCount: "100",
+            f: "json",
+          });
+          const url = `${base}/${serviceName}/FeatureServer/0/query?${params}`;
+          const res = await fetch(url, { next: { revalidate: 3600 } });
+          if (!res.ok) continue;
 
-        const data = await res.json();
-        if (data.features && data.features.length > 0) {
-          return data;
+          const data = await res.json();
+          if (data.features && data.features.length > 0) {
+            return data;
+          }
+          // ArcGIS returns 200 with error object for invalid service/field names
+          if (data.error) continue;
+        } catch {
+          continue;
         }
-        // ArcGIS returns 200 with error object for invalid service names
-        if (data.error) continue;
-      } catch {
-        continue;
       }
     }
   }

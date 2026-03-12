@@ -5,8 +5,11 @@
  * Dataset ID: 42132aa4e2fc4d41bdaf9a445f688931
  */
 
-const ARCGIS_FEATURE_SERVICE =
-  "https://services.arcgis.com/5T5nSi527N4F7luB/arcgis/rest/services";
+// Use the correct PortWatch org ID
+const ARCGIS_BASES = [
+  "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
+  "https://services.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services",
+];
 
 export interface ChokepointRecord {
   date: string;
@@ -50,19 +53,21 @@ export async function fetchMalaccaChokepointData(
     "chokepoint_daily/FeatureServer/0",
   ];
 
-  for (const serviceName of serviceNames) {
-    try {
-      const url = `${ARCGIS_FEATURE_SERVICE}/${serviceName}/query?${params}`;
-      const res = await fetch(url, { next: { revalidate: 3600 } });
+  for (const base of ARCGIS_BASES) {
+    for (const serviceName of serviceNames) {
+      try {
+        const url = `${base}/${serviceName}/query?${params}`;
+        const res = await fetch(url, { next: { revalidate: 3600 } });
 
-      if (!res.ok) continue;
+        if (!res.ok) continue;
 
-      const data = await res.json();
-      if (data.features && data.features.length > 0) {
-        return normalizeChokepointData(data.features);
+        const data = await res.json();
+        if (data.features && data.features.length > 0) {
+          return normalizeChokepointData(data.features);
+        }
+      } catch {
+        continue;
       }
-    } catch {
-      continue;
     }
   }
 
