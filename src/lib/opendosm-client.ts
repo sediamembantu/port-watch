@@ -42,23 +42,22 @@ export interface TradeSummary {
  * Uses the trade_sitc_1d dataset (Monthly Trade by SITC Section).
  */
 export async function fetchTradeData(
-  monthsBack: number = 12
+  _monthsBack: number = 12
 ): Promise<TradeRecord[]> {
-  const since = new Date();
-  since.setMonth(since.getMonth() - monthsBack);
-  const sinceStr = since.toISOString().split("T")[0];
-
   const params = new URLSearchParams({
     id: "trade_sitc_1d",
-    date_start: sinceStr,
     limit: "200",
     sort: "-date",
   });
 
   const url = `${DOSM_API}?${params}`;
+  console.log("[dosm] Fetching:", url);
   const res = await fetch(url, { next: { revalidate: 86400 } });
 
-  if (!res.ok) return [];
+  if (!res.ok) {
+    console.error("[dosm] API error:", res.status, res.statusText);
+    return [];
+  }
 
   const data: unknown = await res.json();
   const items = Array.isArray(data) ? data : [];
