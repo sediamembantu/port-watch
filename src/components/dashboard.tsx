@@ -5,7 +5,6 @@ import { DisruptionGauge } from "./disruption-gauge";
 import { PortTable } from "./port-table";
 import { ActivityChart } from "./activity-chart";
 import { AlertBanner } from "./alert-banner";
-import { RealtimePanel } from "./realtime-panel";
 import { ChokepointPanel } from "./chokepoint-panel";
 import { TradePanel } from "./trade-panel";
 
