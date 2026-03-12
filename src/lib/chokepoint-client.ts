@@ -37,11 +37,11 @@ export async function fetchMalaccaChokepointData(
   since.setDate(since.getDate() - daysBack);
   const sinceMs = since.getTime();
 
-  // The date field is esriFieldTypeDate (Unix timestamp in ms)
-  // portname contains the chokepoint name (e.g. "Strait of Malacca")
+  // Malacca Strait = chokepoint5 (discovered from API)
+  // date field is esriFieldTypeDate (Unix timestamp in ms)
   const whereClauses = [
-    `(portname LIKE '%Malacca%' OR portname LIKE '%malacca%' OR portname LIKE '%Singapore%') AND date >= ${sinceMs}`,
-    `(portname LIKE '%Malacca%' OR portname LIKE '%malacca%' OR portname LIKE '%Singapore%')`,
+    `portid='chokepoint5' AND date >= ${sinceMs}`,
+    `portid='chokepoint5'`,
   ];
 
   for (const where of whereClauses) {
