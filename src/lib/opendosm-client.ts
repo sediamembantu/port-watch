@@ -42,15 +42,10 @@ export interface TradeSummary {
  * Uses the trade_sitc_1d dataset (Monthly Trade by SITC Section).
  */
 export async function fetchTradeData(
-  monthsBack: number = 12
+  _monthsBack: number = 12
 ): Promise<TradeRecord[]> {
-  const since = new Date();
-  since.setMonth(since.getMonth() - monthsBack);
-  const sinceStr = since.toISOString().split("T")[0];
-
   const params = new URLSearchParams({
     id: "trade_sitc_1d",
-    date_start: `${sinceStr}@date`,
     limit: "200",
     sort: "-date",
   });
