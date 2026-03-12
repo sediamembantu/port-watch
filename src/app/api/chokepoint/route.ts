@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import {
-  fetchMalaccaChokepointData,
-  computeChokepointSummary,
+  fetchChokepointData,
+  computeAllChokepointSummaries,
 } from "@/lib/chokepoint-client";
 
 export async function GET() {
   try {
-    const records = await fetchMalaccaChokepointData(30);
-    const summary = computeChokepointSummary(records);
+    const records = await fetchChokepointData(30);
+    const summaries = computeAllChokepointSummaries(records);
 
     return NextResponse.json({
-      summary,
+      summaries,
       recordCount: records.length,
       timestamp: new Date().toISOString(),
       source: "IMF PortWatch Chokepoint Data",

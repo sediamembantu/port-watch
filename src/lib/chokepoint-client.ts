@@ -1,5 +1,5 @@
 /**
- * IMF PortWatch Chokepoint Monitoring — Strait of Malacca
+ * IMF PortWatch Chokepoint Monitoring — Strait of Malacca & Strait of Hormuz
  *
  * Uses the Daily_Chokepoints_Data service from PortWatch ArcGIS.
  * Fields: date (timestamp ms), portid, portname, n_total, capacity, etc.
@@ -11,8 +11,16 @@ const ARCGIS_BASE =
 
 const DAILY_CHOKEPOINTS_SERVICE = "Daily_Chokepoints_Data";
 
+export const CHOKEPOINTS = {
+  malacca: { id: "chokepoint5", name: "Strait of Malacca" },
+  hormuz: { id: "chokepoint6", name: "Strait of Hormuz" },
+} as const;
+
+export type ChokepointKey = keyof typeof CHOKEPOINTS;
+
 export interface ChokepointRecord {
   date: string;
+  chokepointId: string;
   chokepointName: string;
   transitCount: number;
   avgWaitDays: number;
@@ -21,6 +29,8 @@ export interface ChokepointRecord {
 }
 
 export interface ChokepointSummary {
+  chokepointId: string;
+  chokepointName: string;
   current: ChokepointRecord | null;
   history: ChokepointRecord[];
   weeklyChange: number; // % change in transits vs prior week
@@ -28,20 +38,22 @@ export interface ChokepointSummary {
 }
 
 /**
- * Fetch Strait of Malacca chokepoint transit data from PortWatch.
+ * Fetch chokepoint transit data for both Malacca and Hormuz from PortWatch.
  */
-export async function fetchMalaccaChokepointData(
+export async function fetchChokepointData(
   daysBack: number = 30
 ): Promise<ChokepointRecord[]> {
   const since = new Date();
   since.setDate(since.getDate() - daysBack);
   const sinceMs = since.getTime();
 
-  // Malacca Strait = chokepoint5 (discovered from API)
-  // date field is esriFieldTypeDate (Unix timestamp in ms)
+  const chokepointIds = Object.values(CHOKEPOINTS)
+    .map((c) => `'${c.id}'`)
+    .join(",");
+
   const whereClauses = [
-    `portid='chokepoint5' AND date >= ${sinceMs}`,
-    `portid='chokepoint5'`,
+    `portid IN (${chokepointIds}) AND date >= ${sinceMs}`,
+    `portid IN (${chokepointIds})`,
   ];
 
   for (const where of whereClauses) {
@@ -49,7 +61,7 @@ export async function fetchMalaccaChokepointData(
       const params = new URLSearchParams({
         where,
         outFields: "*",
-        resultRecordCount: "200",
+        resultRecordCount: "500",
         f: "json",
       });
       const url = `${ARCGIS_BASE}/${DAILY_CHOKEPOINTS_SERVICE}/FeatureServer/0/query?${params}`;
@@ -80,9 +92,12 @@ export async function fetchMalaccaChokepointData(
     }
   }
 
-  console.warn("[chokepoint] No Malacca data found");
+  console.warn("[chokepoint] No chokepoint data found");
   return [];
 }
+
+// Keep backward-compatible alias
+export const fetchMalaccaChokepointData = fetchChokepointData;
 
 /**
  * Convert Unix timestamp (ms) to YYYY-MM-DD string.
@@ -93,30 +108,41 @@ function timestampToDateStr(ts: unknown): string {
   return new Date(n).toISOString().split("T")[0];
 }
 
+// Map portid -> chokepoint config
+const CHOKEPOINT_BY_ID = new Map<string, { id: string; name: string }>(
+  Object.values(CHOKEPOINTS).map((c) => [c.id, c])
+);
+
 function normalizeChokepointData(
   features: Array<{ attributes: Record<string, unknown> }>
 ): ChokepointRecord[] {
   return features.map((f) => {
     const a = f.attributes;
+    const portid = String(a.portid || "");
+    const chokepoint = CHOKEPOINT_BY_ID.get(portid);
     return {
       date: timestampToDateStr(a.date),
-      chokepointName: String(a.portname || "Strait of Malacca"),
+      chokepointId: portid,
+      chokepointName:
+        chokepoint?.name || String(a.portname || "Unknown Chokepoint"),
       transitCount: Number(a.n_total || 0),
-      avgWaitDays: 0, // not available in this dataset
-      congestionIndex: 0, // computed in summary from transit trends
+      avgWaitDays: 0,
+      congestionIndex: 0,
       trend: "stable" as const,
     };
   });
 }
 
 /**
- * Compute a summary for the Strait of Malacca chokepoint.
+ * Compute a summary for a single chokepoint's records.
  */
 export function computeChokepointSummary(
   records: ChokepointRecord[]
 ): ChokepointSummary {
   if (records.length === 0) {
     return {
+      chokepointId: "",
+      chokepointName: "",
       current: null,
       history: [],
       weeklyChange: 0,
@@ -126,7 +152,6 @@ export function computeChokepointSummary(
 
   const sorted = [...records].sort((a, b) => b.date.localeCompare(a.date));
 
-  // Compute 7-day trends
   const recent7 = sorted.slice(0, 7);
   const prior7 = sorted.slice(7, 14);
 
@@ -144,7 +169,6 @@ export function computeChokepointSummary(
       ? ((recentAvgTransits - priorAvgTransits) / priorAvgTransits) * 100
       : 0;
 
-  // Add trend to each record
   const withTrends = sorted.map((r, i) => {
     if (i >= sorted.length - 1) return { ...r, trend: "stable" as const };
     const next = sorted[i + 1];
@@ -161,7 +185,6 @@ export function computeChokepointSummary(
     };
   });
 
-  // Determine status from transit volume change
   const changePct = Math.abs(weeklyChange);
   const status: "normal" | "elevated" | "congested" =
     changePct < 10
@@ -171,9 +194,31 @@ export function computeChokepointSummary(
         : "congested";
 
   return {
+    chokepointId: sorted[0].chokepointId,
+    chokepointName: sorted[0].chokepointName,
     current: withTrends[0] ?? null,
     history: withTrends,
     weeklyChange: Math.round(weeklyChange * 10) / 10,
     status,
   };
+}
+
+/**
+ * Compute summaries for all chokepoints from a mixed set of records.
+ */
+export function computeAllChokepointSummaries(
+  records: ChokepointRecord[]
+): Record<string, ChokepointSummary> {
+  const byChokepoint: Record<string, ChokepointRecord[]> = {};
+  for (const r of records) {
+    if (!byChokepoint[r.chokepointId]) byChokepoint[r.chokepointId] = [];
+    byChokepoint[r.chokepointId].push(r);
+  }
+
+  const summaries: Record<string, ChokepointSummary> = {};
+  for (const [id, recs] of Object.entries(byChokepoint)) {
+    summaries[id] = computeChokepointSummary(recs);
+  }
+
+  return summaries;
 }

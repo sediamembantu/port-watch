@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchAllMalaysianPorts } from "@/lib/portwatch-client";
 import { saveSnapshot } from "@/lib/data-store";
-import { fetchMalaccaChokepointData } from "@/lib/chokepoint-client";
+import { fetchChokepointData } from "@/lib/chokepoint-client";
 
 export const maxDuration = 60; // Allow up to 60s for fetching all ports
 
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
         console.error("[cron] Port fetch failed:", err);
         return [];
       }),
-      fetchMalaccaChokepointData(30).catch((err) => {
+      fetchChokepointData(30).catch((err) => {
         console.warn("[cron] Chokepoint fetch failed (non-fatal):", err);
         return [];
       }),
