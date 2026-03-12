@@ -12,69 +12,43 @@ export async function GET() {
     featureCount?: number;
     sampleFields?: string[];
     sampleValues?: Record<string, unknown>;
+    sampleValues2?: Record<string, unknown>;
     error?: string;
   }> = [];
 
-  // 1. Chokepoint debug: try different queries for chokepoint5 and chokepoint6
+  // Test chokepoint queries with date DESC ordering
   const chokepointQueries = [
-    "portid IN ('chokepoint5','chokepoint6')",
     "portid='chokepoint5'",
     "portid='chokepoint6'",
-    "portname LIKE '%Malacca%'",
-    "portname LIKE '%Hormuz%'",
-    "1=1",
+    "portid IN ('chokepoint5','chokepoint6')",
   ];
 
   for (const where of chokepointQueries) {
     try {
       const params = new URLSearchParams({
         where,
-        outFields: "*",
-        resultRecordCount: "3",
+        outFields: "date,portid,portname,n_total,capacity",
+        orderByFields: "date DESC",
+        resultRecordCount: "2",
         f: "json",
       });
       const url = `${BASE}/Daily_Chokepoints_Data/FeatureServer/0/query?${params}`;
       const res = await fetch(url);
       const data = await res.json();
       results.push({
-        label: `Chokepoints | ${where}`,
+        label: `Chokepoints | ${where} (DESC)`,
         status: res.status,
         featureCount: data.features?.length ?? 0,
-        sampleFields: data.features?.[0]
-          ? Object.keys(data.features[0].attributes)
-          : [],
         sampleValues: data.features?.[0]?.attributes,
+        sampleValues2: data.features?.[1]?.attributes,
         error: data.error?.message,
       });
     } catch (e) {
       results.push({
-        label: `Chokepoints | ${where}`,
+        label: `Chokepoints | ${where} (DESC)`,
         status: `error: ${e instanceof Error ? e.message : String(e)}`,
       });
     }
-  }
-
-  // 2. Check the service metadata to see layer info
-  try {
-    const url = `${BASE}/Daily_Chokepoints_Data/FeatureServer/0?f=json`;
-    const res = await fetch(url);
-    const data = await res.json();
-    results.push({
-      label: "Chokepoints | Layer metadata",
-      status: res.status,
-      sampleValues: {
-        name: data.name,
-        type: data.type,
-        maxRecordCount: data.maxRecordCount,
-        fields: data.fields?.map((f: { name: string; type: string }) => `${f.name}(${f.type})`),
-      },
-      error: data.error?.message,
-    });
-  } catch (e) {
-    results.push({
-      label: "Chokepoints | Layer metadata",
-      status: `error: ${e instanceof Error ? e.message : String(e)}`,
-    });
   }
 
   return NextResponse.json({ results }, { status: 200 });

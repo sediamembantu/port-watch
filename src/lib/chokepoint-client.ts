@@ -61,6 +61,7 @@ export async function fetchChokepointData(
       const params = new URLSearchParams({
         where,
         outFields: "*",
+        orderByFields: "date DESC",
         resultRecordCount: "500",
         f: "json",
       });
