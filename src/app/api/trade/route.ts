@@ -1,20 +1,26 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { fetchTradeData, computeTradeSummary } from "@/lib/opendosm-client";
 import { getTradeSummary, saveTradeSummary } from "@/lib/data-store";
 
-export async function GET() {
+export const dynamic = "force-dynamic";
+
+export async function GET(request: NextRequest) {
   try {
-    // Try Redis cache first (populated by cron job)
-    const cached = await getTradeSummary();
-    if (cached && cached.latestMonth) {
-      return NextResponse.json({
-        summary: cached,
-        source: "OpenDOSM / data.gov.my (cached)",
-        timestamp: new Date().toISOString(),
-      });
+    const refresh = request.nextUrl.searchParams.get("refresh") === "1";
+
+    // Try Redis cache first (unless refresh requested)
+    if (!refresh) {
+      const cached = await getTradeSummary();
+      if (cached && cached.latestMonth) {
+        return NextResponse.json({
+          summary: cached,
+          source: "OpenDOSM / data.gov.my (cached)",
+          timestamp: new Date().toISOString(),
+        });
+      }
     }
 
-    // Fallback: fetch CSV directly
+    // Fetch fresh data
     const records = await fetchTradeData(12);
     const summary = computeTradeSummary(records);
 
