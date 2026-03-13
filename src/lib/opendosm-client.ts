@@ -1,12 +1,15 @@
 /**
- * OpenDOSM / data.gov.my API client for Malaysian trade statistics.
+ * OpenDOSM trade data client.
+ *
+ * Fetches Malaysia's monthly trade statistics from the DOSM storage CSV
+ * (the API endpoint is unreliable, so we use the static CSV instead).
  *
  * Dataset: trade_sitc_1d (Monthly Trade by SITC Section)
- * API: https://api.data.gov.my/data-catalogue?id=trade_sitc_1d
  * Source: https://open.dosm.gov.my/data-catalogue/trade_sitc_1d
+ * CSV: https://storage.dosm.gov.my/trade/trade_sitc_1d.csv
  */
 
-const DOSM_API = "https://api.data.gov.my/data-catalogue";
+const DOSM_CSV_URL = "https://storage.dosm.gov.my/trade/trade_sitc_1d.csv";
 
 export interface TradeRecord {
   date: string;
@@ -38,50 +41,64 @@ export interface TradeSummary {
 }
 
 /**
- * Fetch Malaysia's external trade data from OpenDOSM.
- * Uses the trade_sitc_1d dataset (Monthly Trade by SITC Section).
+ * Parse a CSV string into TradeRecord[].
+ * Expected columns: date, sitc_section, exports, imports
+ */
+function parseTradeCSV(csv: string): TradeRecord[] {
+  const lines = csv.trim().split("\n");
+  if (lines.length < 2) return [];
+
+  const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  const dateIdx = header.indexOf("date");
+  const sectionIdx = header.indexOf("sitc_section");
+  const exportsIdx = header.indexOf("exports");
+  const importsIdx = header.indexOf("imports");
+
+  if (dateIdx < 0 || exportsIdx < 0 || importsIdx < 0) {
+    console.error("[dosm] CSV missing required columns. Header:", header);
+    return [];
+  }
+
+  const records: TradeRecord[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(",");
+    const date = cols[dateIdx]?.trim() || "";
+    if (!date) continue;
+
+    const exports = Number(cols[exportsIdx]) || 0;
+    const imports = Number(cols[importsIdx]) || 0;
+    const section = sectionIdx >= 0 ? (cols[sectionIdx]?.trim() || "overall") : "overall";
+
+    records.push({
+      date,
+      exports,
+      imports,
+      tradeBalance: exports - imports,
+      category: section,
+    });
+  }
+
+  return records;
+}
+
+/**
+ * Fetch Malaysia's external trade data from DOSM storage CSV.
  */
 export async function fetchTradeData(
   _monthsBack: number = 12
 ): Promise<TradeRecord[]> {
-  const params = new URLSearchParams({
-    id: "trade_sitc_1d",
-    limit: "200",
-    sort: "-date",
-  });
-
-  const url = `${DOSM_API}?${params}`;
-  console.log("[dosm] Fetching:", url);
-  const res = await fetch(url, { next: { revalidate: 86400 } });
+  console.log("[dosm] Fetching CSV:", DOSM_CSV_URL);
+  const res = await fetch(DOSM_CSV_URL, { next: { revalidate: 86400 } });
 
   if (!res.ok) {
-    console.error("[dosm] API error:", res.status, res.statusText);
+    console.error("[dosm] CSV fetch error:", res.status, res.statusText);
     return [];
   }
 
-  const data: unknown = await res.json();
-  const items = Array.isArray(data) ? data : [];
-
-  return items
-    .filter(
-      (item): item is Record<string, unknown> =>
-        typeof item === "object" && item !== null
-    )
-    .map((item) => {
-      const date = String(item.date || "");
-      const exports = Number(item.exports || 0);
-      const imports = Number(item.imports || 0);
-      const section = String(item.sitc_section ?? item.section ?? "overall");
-
-      return {
-        date,
-        exports,
-        imports,
-        tradeBalance: exports - imports,
-        category: section,
-      };
-    })
-    .filter((r) => r.date);
+  const csv = await res.text();
+  const records = parseTradeCSV(csv);
+  console.log(`[dosm] Parsed ${records.length} records from CSV`);
+  return records;
 }
 
 /**
