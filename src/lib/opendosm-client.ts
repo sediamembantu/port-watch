@@ -51,7 +51,10 @@ function parseTradeCSV(csv: string): TradeRecord[] {
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
   console.log("[dosm] CSV header:", header);
   const dateIdx = header.indexOf("date");
-  const sectionIdx = header.includes("sitc") ? header.indexOf("sitc") : header.indexOf("sitc_section");
+  const sectionIdx = ["section", "sitc", "sitc_section"].reduce(
+    (found, col) => (found >= 0 ? found : header.indexOf(col)),
+    -1
+  );
   const exportsIdx = header.indexOf("exports");
   const importsIdx = header.indexOf("imports");
 
@@ -92,7 +95,7 @@ function parseTradeJSON(data: unknown[]): TradeRecord[] {
       const date = String(item.date || "");
       const exports = Number(item.exports || 0);
       const imports = Number(item.imports || 0);
-      const section = String(item.sitc ?? item.sitc_section ?? item.section ?? "overall");
+      const section = String(item.section ?? item.sitc ?? item.sitc_section ?? "overall");
 
       return {
         date,
