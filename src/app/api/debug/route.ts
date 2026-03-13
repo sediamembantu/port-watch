@@ -73,6 +73,34 @@ export async function GET() {
   ]);
   results.push(...tradeTests);
 
+  // Discover all available chokepoint IDs
+  try {
+    const discoverParams = new URLSearchParams({
+      where: "portid LIKE 'chokepoint%'",
+      outFields: "portid,portname",
+      returnDistinctValues: "true",
+      resultRecordCount: "50",
+      f: "json",
+    });
+    const discoverUrl = `${BASE}/Daily_Chokepoints_Data/FeatureServer/0/query?${discoverParams}`;
+    const res = await fetch(discoverUrl);
+    const data = await res.json();
+    const allChokepoints = (data.features || []).map(
+      (f: { attributes: Record<string, unknown> }) => f.attributes
+    );
+    results.push({
+      label: "All Chokepoint IDs (discovery)",
+      status: res.status,
+      featureCount: allChokepoints.length,
+      preview: JSON.stringify(allChokepoints),
+    });
+  } catch (e) {
+    results.push({
+      label: "All Chokepoint IDs (discovery)",
+      status: `error: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
   // Test chokepoint queries
   const chokepointQueries = [
     "portid='chokepoint5'",
