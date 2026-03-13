@@ -42,15 +42,16 @@ export interface TradeSummary {
 
 /**
  * Parse a CSV string into TradeRecord[].
- * Expected columns: date, sitc_section, exports, imports
+ * Expected columns: date, sitc, exports, imports
  */
 function parseTradeCSV(csv: string): TradeRecord[] {
   const lines = csv.trim().split("\n");
   if (lines.length < 2) return [];
 
   const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  console.log("[dosm] CSV header:", header);
   const dateIdx = header.indexOf("date");
-  const sectionIdx = header.indexOf("sitc_section");
+  const sectionIdx = header.includes("sitc") ? header.indexOf("sitc") : header.indexOf("sitc_section");
   const exportsIdx = header.indexOf("exports");
   const importsIdx = header.indexOf("imports");
 
@@ -95,7 +96,15 @@ export async function fetchTradeData(
     return [];
   }
 
+  const contentType = res.headers.get("content-type") || "";
   const csv = await res.text();
+  console.log(`[dosm] Response content-type: ${contentType}, length: ${csv.length}, first 200 chars: ${csv.slice(0, 200)}`);
+
+  if (!csv.includes(",") || csv.startsWith("<!")) {
+    console.error("[dosm] Response is not CSV (possibly HTML or error page)");
+    return [];
+  }
+
   const records = parseTradeCSV(csv);
   console.log(`[dosm] Parsed ${records.length} records from CSV`);
   return records;
