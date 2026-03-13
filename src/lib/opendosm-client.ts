@@ -1,15 +1,15 @@
 /**
  * OpenDOSM trade data client.
  *
- * Fetches Malaysia's monthly trade statistics from the DOSM storage CSV
- * (the API endpoint is unreliable, so we use the static CSV instead).
+ * Fetches Malaysia's monthly trade statistics from DOSM.
+ * Tries multiple sources: storage CSV, then the data-catalogue API.
  *
  * Dataset: trade_sitc_1d (Monthly Trade by SITC Section)
  * Source: https://open.dosm.gov.my/data-catalogue/trade_sitc_1d
- * CSV: https://storage.dosm.gov.my/trade/trade_sitc_1d.csv
  */
 
 const DOSM_CSV_URL = "https://storage.dosm.gov.my/trade/trade_sitc_1d.csv";
+const DOSM_API_URL = "https://api.data.gov.my/data-catalogue";
 
 export interface TradeRecord {
   date: string;
@@ -42,7 +42,7 @@ export interface TradeSummary {
 
 /**
  * Parse a CSV string into TradeRecord[].
- * Expected columns: date, sitc, exports, imports
+ * Expected columns: date, sitc (or sitc_section), exports, imports
  */
 function parseTradeCSV(csv: string): TradeRecord[] {
   const lines = csv.trim().split("\n");
@@ -83,31 +83,127 @@ function parseTradeCSV(csv: string): TradeRecord[] {
 }
 
 /**
- * Fetch Malaysia's external trade data from DOSM storage CSV.
+ * Parse JSON array from the data-catalogue API into TradeRecord[].
+ */
+function parseTradeJSON(data: unknown[]): TradeRecord[] {
+  return data
+    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    .map((item) => {
+      const date = String(item.date || "");
+      const exports = Number(item.exports || 0);
+      const imports = Number(item.imports || 0);
+      const section = String(item.sitc ?? item.sitc_section ?? item.section ?? "overall");
+
+      return {
+        date,
+        exports,
+        imports,
+        tradeBalance: exports - imports,
+        category: section,
+      };
+    })
+    .filter((r) => r.date);
+}
+
+/**
+ * Try fetching trade data from the storage CSV.
+ */
+async function fetchFromCSV(): Promise<TradeRecord[]> {
+  console.log("[dosm] Trying CSV:", DOSM_CSV_URL);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const res = await fetch(DOSM_CSV_URL, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      console.error("[dosm] CSV fetch error:", res.status, res.statusText);
+      return [];
+    }
+
+    const csv = await res.text();
+    console.log(`[dosm] CSV response length: ${csv.length}, first 200: ${csv.slice(0, 200)}`);
+
+    if (!csv.includes(",") || csv.startsWith("<!")) {
+      console.error("[dosm] Response is not CSV");
+      return [];
+    }
+
+    return parseTradeCSV(csv);
+  } catch (err) {
+    console.warn("[dosm] CSV fetch failed:", err instanceof Error ? err.message : err);
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Try fetching trade data from the data-catalogue API.
+ */
+async function fetchFromAPI(): Promise<TradeRecord[]> {
+  const url = `${DOSM_API_URL}?id=trade_sitc_1d&limit=200&sort=-date`;
+  console.log("[dosm] Trying API:", url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      console.error("[dosm] API error:", res.status, res.statusText);
+      return [];
+    }
+
+    const data: unknown = await res.json();
+    console.log(`[dosm] API response type: ${typeof data}, isArray: ${Array.isArray(data)}, length: ${Array.isArray(data) ? data.length : "N/A"}`);
+
+    if (!Array.isArray(data) || data.length === 0) {
+      console.error("[dosm] API returned empty or non-array response");
+      return [];
+    }
+
+    // Log first item to see field names
+    console.log("[dosm] API first item keys:", Object.keys(data[0] as object));
+
+    return parseTradeJSON(data);
+  } catch (err) {
+    console.warn("[dosm] API fetch failed:", err instanceof Error ? err.message : err);
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
+ * Fetch Malaysia's external trade data.
+ * Tries CSV first, falls back to API.
  */
 export async function fetchTradeData(
   _monthsBack: number = 12
 ): Promise<TradeRecord[]> {
-  console.log("[dosm] Fetching CSV:", DOSM_CSV_URL);
-  const res = await fetch(DOSM_CSV_URL, { next: { revalidate: 86400 } });
-
-  if (!res.ok) {
-    console.error("[dosm] CSV fetch error:", res.status, res.statusText);
-    return [];
+  // Try CSV first
+  let records = await fetchFromCSV();
+  if (records.length > 0) {
+    console.log(`[dosm] CSV: ${records.length} records`);
+    return records;
   }
 
-  const contentType = res.headers.get("content-type") || "";
-  const csv = await res.text();
-  console.log(`[dosm] Response content-type: ${contentType}, length: ${csv.length}, first 200 chars: ${csv.slice(0, 200)}`);
-
-  if (!csv.includes(",") || csv.startsWith("<!")) {
-    console.error("[dosm] Response is not CSV (possibly HTML or error page)");
-    return [];
+  // Fallback to API
+  records = await fetchFromAPI();
+  if (records.length > 0) {
+    console.log(`[dosm] API: ${records.length} records`);
+    return records;
   }
 
-  const records = parseTradeCSV(csv);
-  console.log(`[dosm] Parsed ${records.length} records from CSV`);
-  return records;
+  console.error("[dosm] All sources failed — no trade data available");
+  return [];
 }
 
 /**
