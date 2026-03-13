@@ -1,5 +1,8 @@
 /**
- * IMF PortWatch Chokepoint Monitoring — Strait of Malacca & Strait of Hormuz
+ * IMF PortWatch Chokepoint Monitoring
+ *
+ * Tracks: Suez Canal, Bab el-Mandeb, Strait of Malacca, Strait of Hormuz,
+ * and Cape of Good Hope.
  *
  * Uses the Daily_Chokepoints_Data service from PortWatch ArcGIS.
  * Fields: date (timestamp ms), portid, portname, n_total, capacity, etc.
@@ -12,8 +15,11 @@ const ARCGIS_BASE =
 const DAILY_CHOKEPOINTS_SERVICE = "Daily_Chokepoints_Data";
 
 export const CHOKEPOINTS = {
+  suez: { id: "chokepoint1", name: "Suez Canal" },
+  babElMandeb: { id: "chokepoint2", name: "Bab el-Mandeb Strait" },
   malacca: { id: "chokepoint5", name: "Strait of Malacca" },
   hormuz: { id: "chokepoint6", name: "Strait of Hormuz" },
+  capeOfGoodHope: { id: "chokepoint7", name: "Cape of Good Hope" },
 } as const;
 
 export type ChokepointKey = keyof typeof CHOKEPOINTS;

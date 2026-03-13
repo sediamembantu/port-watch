@@ -34,8 +34,11 @@ const statusBorder = {
 };
 
 const barColor: Record<string, string> = {
+  chokepoint1: "bg-blue-500",
+  chokepoint2: "bg-red-500",
   chokepoint5: "bg-cyan-600",
   chokepoint6: "bg-orange-500",
+  chokepoint7: "bg-emerald-500",
 };
 
 function SingleChokepointCard({ summary }: { summary: ChokepointSummary }) {
@@ -162,8 +165,8 @@ export function ChokepointPanel() {
     fetchData();
   }, [fetchData]);
 
-  // Prefer Hormuz first (the "problem area"), then Malacca
-  const orderedIds = ["chokepoint6", "chokepoint5"];
+  // Order: Suez, Bab el-Mandeb, Hormuz, Malacca, Cape of Good Hope
+  const orderedIds = ["chokepoint1", "chokepoint2", "chokepoint6", "chokepoint5", "chokepoint7"];
   const available = orderedIds.filter((id) => summaries[id]);
   const hasSummaries = available.length > 0;
 
@@ -181,7 +184,7 @@ export function ChokepointPanel() {
       )}
 
       {!loading && hasSummaries && (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {available.map((id) => (
             <SingleChokepointCard key={id} summary={summaries[id]} />
           ))}
