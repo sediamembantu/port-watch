@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
+const DEBUG_VERSION = "v2-trade-sources";
 
 const BASE =
   "https://services9.arcgis.com/weJ1QsnbMYJlCHdG/ArcGIS/rest/services";
@@ -15,80 +18,62 @@ interface DebugResult {
   error?: string;
   size?: number;
   preview?: string;
+  elapsed?: number;
+}
+
+async function testSource(
+  label: string,
+  url: string,
+  timeoutMs: number = 8000
+): Promise<DebugResult> {
+  const start = Date.now();
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    clearTimeout(timeout);
+    const text = await res.text();
+    return {
+      label,
+      status: res.status,
+      size: text.length,
+      preview: text.slice(0, 400),
+      elapsed: Date.now() - start,
+    };
+  } catch (e) {
+    return {
+      label,
+      status: "error",
+      error: e instanceof Error ? e.message : String(e),
+      elapsed: Date.now() - start,
+    };
+  }
 }
 
 export async function GET() {
   const results: DebugResult[] = [];
 
-  // --- Test DOSM trade data sources ---
+  // Run all trade source tests in parallel (with short timeouts)
+  const tradeTests = await Promise.all([
+    testSource(
+      "Trade CSV (storage.dosm.gov.my)",
+      "https://storage.dosm.gov.my/trade/trade_sitc_1d.csv",
+      8000
+    ),
+    testSource(
+      "Trade API (api.data.gov.my)",
+      "https://api.data.gov.my/data-catalogue?id=trade_sitc_1d&limit=3&sort=-date",
+      8000
+    ),
+    testSource(
+      "Trade alt API (api.dosm.gov.my)",
+      "https://api.dosm.gov.my/public/trade?limit=3",
+      8000
+    ),
+  ]);
+  results.push(...tradeTests);
 
-  // 1. CSV source
-  try {
-    const csvUrl = "https://storage.dosm.gov.my/trade/trade_sitc_1d.csv";
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(csvUrl, { signal: controller.signal, cache: "no-store" });
-    clearTimeout(timeout);
-    const text = await res.text();
-    results.push({
-      label: "Trade CSV (storage.dosm.gov.my)",
-      status: res.status,
-      size: text.length,
-      preview: text.slice(0, 300),
-    });
-  } catch (e) {
-    results.push({
-      label: "Trade CSV (storage.dosm.gov.my)",
-      status: "error",
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
-
-  // 2. API source
-  try {
-    const apiUrl = "https://api.data.gov.my/data-catalogue?id=trade_sitc_1d&limit=3&sort=-date";
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(apiUrl, { signal: controller.signal, cache: "no-store" });
-    clearTimeout(timeout);
-    const text = await res.text();
-    results.push({
-      label: "Trade API (api.data.gov.my)",
-      status: res.status,
-      size: text.length,
-      preview: text.slice(0, 500),
-    });
-  } catch (e) {
-    results.push({
-      label: "Trade API (api.data.gov.my)",
-      status: "error",
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
-
-  // 3. Alternative: try the OpenDOSM API directly
-  try {
-    const altUrl = "https://api.dosm.gov.my/public/trade?limit=3";
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10000);
-    const res = await fetch(altUrl, { signal: controller.signal, cache: "no-store" });
-    clearTimeout(timeout);
-    const text = await res.text();
-    results.push({
-      label: "Trade alt API (api.dosm.gov.my)",
-      status: res.status,
-      size: text.length,
-      preview: text.slice(0, 500),
-    });
-  } catch (e) {
-    results.push({
-      label: "Trade alt API (api.dosm.gov.my)",
-      status: "error",
-      error: e instanceof Error ? e.message : String(e),
-    });
-  }
-
-  // --- Test chokepoint queries ---
+  // Test chokepoint queries
   const chokepointQueries = [
     "portid='chokepoint5'",
     "portid='chokepoint6'",
@@ -123,5 +108,8 @@ export async function GET() {
     }
   }
 
-  return NextResponse.json({ results }, { status: 200 });
+  return NextResponse.json(
+    { version: DEBUG_VERSION, timestamp: new Date().toISOString(), results },
+    { status: 200 }
+  );
 }
